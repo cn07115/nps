@@ -1,5 +1,18 @@
 <div class="row">
     <div class="col-md-12 col-md-auto">
+        <style>
+/* Pin flatpickr's font size so the inspire base stylesheet can't
+   blow up the calendar (otherwise the date numbers and weekday
+   labels render at several times the intended size). */
+.flatpickr-calendar { font-size: 14px; }
+.flatpickr-calendar .flatpickr-day,
+.flatpickr-calendar .flatpickr-weekday,
+.flatpickr-calendar .flatpickr-monthDropdown-months,
+.flatpickr-calendar .flatpickr-current-month,
+.flatpickr-calendar .flatpickr-time,
+.flatpickr-calendar .numInputWrapper,
+.flatpickr-calendar .flatpickr-am-pm { font-size: 14px; }
+        </style>
         <div class="ibox float-e-margins">
             <h3 class="ibox-title" langtag="page-clientedit"></h3>
             <div class="ibox-content">
@@ -171,6 +184,13 @@
                         <div class="col-sm-10">
                             <input class="form-control flatpickr-expire" value="{{.c.ExpireTime}}" type="text" name="expire_time"
                                 placeholder="2026-12-31 23:59:59" autocomplete="off">
+                            <div class="expire-presets m-t-sm">
+                                <button type="button" class="btn btn-xs btn-outline btn-default expire-preset" data-days="7">+7天</button>
+                                <button type="button" class="btn btn-xs btn-outline btn-default expire-preset" data-days="30">+30天</button>
+                                <button type="button" class="btn btn-xs btn-outline btn-default expire-preset" data-days="90">+90天</button>
+                                <button type="button" class="btn btn-xs btn-outline btn-default expire-preset" data-days="365">+1年</button>
+                                <button type="button" class="btn btn-xs btn-outline btn-warning expire-clear">清除(无到期)</button>
+                            </div>
                             <span class="help-block m-b-none" langtag="info-expiretime"></span>
                         </div>
                     </div>
@@ -209,16 +229,66 @@
         // 页面加载时初始化显示状态
         changeIpWhite();
 
-        // 到期时间选择器
+        // 到期时间选择器:常驻显示 + 严格格式校验 + 快捷预设 + 清除
         if (typeof flatpickr !== 'undefined') {
-            flatpickr('.flatpickr-expire', {
+            // 后端期望的格式是 "2006-01-02 15:04:05"(nps 时间序列化风格)
+            var FP_FORMAT = 'Y-m-d H:i:S';
+            var fp = flatpickr('.flatpickr-expire', {
                 enableTime: true,
                 enableSeconds: true,
                 time_24hr: true,
-                dateFormat: 'Y-m-d H:i:S',
+                dateFormat: FP_FORMAT,
+                // Allow typing directly into the field too — useful for
+                // pasting a date or clearing the value.
                 allowInput: true,
-                locale: (flatpickr.l10ns && flatpickr.l10ns.zh) ? 'zh' : 'default'
+                locale: (flatpickr.l10ns && flatpickr.l10ns.zh) ? 'zh' : 'default',
+                onReady: function (selectedDates, dateStr) {
+                    // Tag the input so we can see in DevTools that
+                    // flatpickr has attached itself to it.
+                    $('.flatpickr-expire').attr('data-flatpickr-ready', '1');
+                },
+                onChange: function (selectedDates, dateStr) {
+                    // 空值合法(代表无到期)
+                    if (!dateStr) {
+                        $('.flatpickr-expire').removeClass('expire-invalid');
+                        return;
+                    }
+                    // 严格匹配 "YYYY-MM-DD HH:MM:SS"
+                    if (!/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(dateStr)) {
+                        $('.flatpickr-expire').addClass('expire-invalid');
+                    } else {
+                        $('.flatpickr-expire').removeClass('expire-invalid');
+                    }
+                }
             });
+
+            // 快捷预设:从今天 +N 天 23:59:59(覆盖一整天)
+            $('.expire-preset').on('click', function () {
+                var days = parseInt($(this).data('days'), 10) || 0;
+                var d = new Date();
+                d.setDate(d.getDate() + days);
+                d.setHours(23, 59, 59, 0);
+                fp.setDate(d, false, FP_FORMAT);
+                $('.flatpickr-expire').removeClass('expire-invalid');
+            });
+
+            // 清除:代表"无到期"
+            $('.expire-clear').on('click', function () {
+                fp.clear();
+                $('.flatpickr-expire').removeClass('expire-invalid');
+            });
+
+            // 提交前校验:格式错就拦
+            $('form').on('submit', function () {
+                var v = $('.flatpickr-expire').val().trim();
+                if (v && !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(v)) {
+                    toastr && toastr.error('到期时间格式错误,应为 YYYY-MM-DD HH:MM:SS', '提示');
+                    $('.flatpickr-expire').addClass('expire-invalid').focus();
+                    return false;
+                }
+            });
+        } else {
+            console.error('flatpickr is not loaded — expire time picker will not work');
         }
     });
 </script>

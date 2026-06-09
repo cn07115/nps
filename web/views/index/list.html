@@ -239,4 +239,38 @@
             }
         ]
     });
+
+    // ---------- Realtime auto-refresh ----------
+    // The tunnel list auto-refreshes every POLL_MS so flow / connection
+    // counters stay live. Always on; paused only when the tab is hidden.
+    (function () {
+        var POLL_MS = 3000;
+        var timer = null;
+
+        function start() {
+            stop();
+            timer = setInterval(function () {
+                var $table = $('#table');
+                if ($table.length === 0) { stop(); return; }
+                $table.bootstrapTable('refresh', { silent: true });
+            }, POLL_MS);
+        }
+
+        function stop() {
+            if (timer !== null) {
+                clearInterval(timer);
+                timer = null;
+            }
+        }
+
+        start();
+        window.addEventListener('pagehide', stop);
+        document.addEventListener('visibilitychange', function () {
+            if (document.hidden) {
+                stop();
+            } else {
+                start();
+            }
+        });
+    })();
 </script>

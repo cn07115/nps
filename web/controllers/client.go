@@ -161,6 +161,14 @@ func (s *ClientController) Edit() {
 
 			c.BlackIpList = RemoveRepeatedElement(strings.Split(s.getEscapeString("blackiplist"), "\r\n"))
 			c.ExpireTime = normalizeExpireTime(s.getEscapeString("expire_time"))
+			// If the user moved the expiry to a future time, immediately
+			// un-pause the client so npc's next reconnect attempt can
+			// authenticate — otherwise npc keeps retrying every 5s with
+			// "Validation key incorrect" until checkClientExpire's
+			// minute-long ticker fires.
+			if t, ok := ParseExpireTime(c.ExpireTime); ok && time.Now().Before(t) && !c.Status {
+				c.Status = true
+			}
 			file.GetDb().JsonDb.StoreClientsToJsonFile()
 		}
 		s.AjaxOk("save success")

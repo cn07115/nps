@@ -19,7 +19,7 @@
             {{if eq true .isAdmin}}
 
                 <div class="table-responsive">
-                    <div id="toolbar">
+                        <div id="toolbar">
                         <a href="{{.web_base_url}}/client/add" class="btn btn-primary dim">
                         <i class="fa fa-fw fa-lg fa-plus"></i> <span langtag="word-add"></span></a>
                     </div>
@@ -118,6 +118,22 @@
                 title: '<span langtag="word-address"></span>',//标题
                 halign: 'center',
                 visible: true//false表示不显示
+            },
+            {
+                field: 'ExpireTime',//域值
+                title: '<span langtag="word-expiretime"></span>',//标题
+                halign: 'center',
+                visible: true,//false表示不显示
+                sortable: true,
+                // ExpireTime is an empty string when the client has no
+                // expiry. Show a localized "unrestricted" badge instead
+                // of a blank cell so the column reads consistently.
+                formatter: function (value, row, index) {
+                    if (!value) {
+                        return '<span langtag="info-unrestricted"></span>';
+                    }
+                    return value;
+                }
             },
             {
                 field: 'InletFlow',//域值
@@ -238,6 +254,43 @@
         // alert("复制失败")
         toastr.error('复制失败', '提示');
     });
+
+    // ---------- Realtime auto-refresh ----------
+    // The client list auto-refreshes every POLL_MS so online/offline state
+    // and rate/flow counters stay live. Polling is always on; we only
+    // pause when the tab is hidden or the user navigates away, to avoid
+    // hammering the server while the page is in a background tab.
+    (function () {
+        var POLL_MS = 3000;
+        var timer = null;
+
+        function start() {
+            stop();
+            timer = setInterval(function () {
+                var $table = $('#table');
+                if ($table.length === 0) { stop(); return; }
+                // silent: true keeps pagination / scroll position / expanded rows
+                $table.bootstrapTable('refresh', { silent: true });
+            }, POLL_MS);
+        }
+
+        function stop() {
+            if (timer !== null) {
+                clearInterval(timer);
+                timer = null;
+            }
+        }
+
+        start();
+        window.addEventListener('pagehide', stop);
+        document.addEventListener('visibilitychange', function () {
+            if (document.hidden) {
+                stop();
+            } else {
+                start();
+            }
+        });
+    })();
 
 
 </script>

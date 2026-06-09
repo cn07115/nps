@@ -9814,3 +9814,12 @@ body.md-skin {
     margin: 0;
   }
 }
+
+/* Expire-time picker: red border when the user types an invalid format
+   before saving. Pairs with the JS in client/add.html and
+   client/edit.html that adds .expire-invalid on bad input. */
+input.expire-invalid,
+input.expire-invalid:focus {
+  border-color: #ed5565;
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.075), 0 0 8px rgba(237, 85, 101, 0.4);
+}

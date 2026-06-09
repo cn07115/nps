@@ -233,7 +233,7 @@ reset:
 		}
 		return errors.New("Vkey duplicate, please reset")
 	}
-	if c.Id == 0 {
+	if c.Id == 0 && !c.NoStore {
 		c.Id = int(s.JsonDb.GetClientId())
 	}
 	if c.Flow == nil {

@@ -62,7 +62,7 @@ type Client struct {
 }
 
 func NewClient(vKey string, noStore bool, noDisplay bool) *Client {
-	return &Client{
+	c := &Client{
 		Cnf:       new(Config),
 		Id:        0,
 		VerifyKey: vKey,
@@ -77,6 +77,14 @@ func NewClient(vKey string, noStore bool, noDisplay bool) *Client {
 		RWMutex:   sync.RWMutex{},
 		NoDisplay: noDisplay,
 	}
+	// NoStore clients (e.g. the public_vkey bootstrap client) must not
+	// occupy a real client id, otherwise the first user-created client
+	// ends up with id=2 instead of 1. Park them on a negative sentinel
+	// id so they never collide with the auto-incremented positive range.
+	if noStore {
+		c.Id = -1
+	}
+	return c
 }
 
 func (s *Client) CutConn() {

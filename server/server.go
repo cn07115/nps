@@ -143,7 +143,15 @@ func dealClientExpire() {
 	}
 }
 
-// checkClientExpire 遍历所有客户端，若 ExpireTime 已过则将 Status 置为 false 并断开连接
+// checkClientExpire 遍历所有客户端，根据 ExpireTime 与当前时间的对比
+// 自动调整 Status:
+//
+//   - 过去时间且当前未暂停 → 暂停 + 断开 (过期)
+//   - 未来时间且当前已暂停(且非 NoStore / IsConnect) → 恢复(改回未过期)
+//
+// 反向恢复逻辑修复了一个用户常见的痛点:把已到期的 client 改回未来时间
+// 之后,server 不会主动告诉 npc "你重新连吧"——npc 一直在重试但 vkey 校验
+// 仍然失败(Status 仍然 false)。周期性扫描让它在 1 分钟内自愈。
 func checkClientExpire() {
 	now := time.Now()
 	changed := false
@@ -152,20 +160,31 @@ func checkClientExpire() {
 		if !ok || v == nil {
 			return true
 		}
-		if v.ExpireTime == "" || !v.Status {
+		// 永久无到期 → 不需要扫
+		if v.ExpireTime == "" {
 			return true
 		}
 		t, err := time.ParseInLocation("2006-01-02 15:04:05", v.ExpireTime, time.Local)
 		if err != nil {
 			return true
 		}
+		// 还不到期
 		if now.Before(t) {
+			// 但目前被标为暂停 → 恢复
+			if !v.Status {
+				v.Status = true
+				changed = true
+				logs.Info("client id %d (remark: %s) expiry moved to %s (future), auto resumed", v.Id, v.Remark, v.ExpireTime)
+			}
 			return true
 		}
-		v.Status = false
-		changed = true
-		logs.Info("client id %d (remark: %s) expired at %s, auto paused", v.Id, v.Remark, v.ExpireTime)
-		DelClientConnect(v.Id)
+		// 已过期且还在跑 → 暂停
+		if v.Status {
+			v.Status = false
+			changed = true
+			logs.Info("client id %d (remark: %s) expired at %s, auto paused", v.Id, v.Remark, v.ExpireTime)
+			DelClientConnect(v.Id)
+		}
 		return true
 	})
 	if changed {
@@ -466,10 +485,29 @@ func GetDashboardData() map[string]interface{} {
 	data["bridgeType"] = beego.AppConfig.String("bridge_type")
 	data["httpProxyPort"] = beego.AppConfig.String("http_proxy_port")
 	data["httpsProxyPort"] = beego.AppConfig.String("https_proxy_port")
-	data["ipLimit"] = beego.AppConfig.String("ip_limit")
+	// ip_limit is unset by default in nps.conf, but the dashboard template
+	// renders `langtag="word-{{.data.ipLimit}}"` — leaving it empty would
+	// show a blank cell. Fall back to "false" so the localized label
+	// "word-false" resolves.
+	if v := beego.AppConfig.String("ip_limit"); v != "" {
+		data["ipLimit"] = v
+	} else {
+		data["ipLimit"] = "false"
+	}
 	data["flowStoreInterval"] = beego.AppConfig.String("flow_store_interval")
-	data["serverIp"] = beego.AppConfig.String("p2p_ip")
-	data["p2pPort"] = beego.AppConfig.String("p2p_port")
+	// p2p_ip / p2p_port are also commented out by default. Show explicit
+	// "not configured" / 0 fallbacks so the dashboard never renders a
+	// blank cell.
+	if v := beego.AppConfig.String("p2p_ip"); v != "" {
+		data["serverIp"] = v
+	} else {
+		data["serverIp"] = "-"
+	}
+	if v := beego.AppConfig.String("p2p_port"); v != "" {
+		data["p2pPort"] = v
+	} else {
+		data["p2pPort"] = "-"
+	}
 	data["logLevel"] = beego.AppConfig.String("log_level")
 	tcpCount := 0
 
