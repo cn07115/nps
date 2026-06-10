@@ -42,6 +42,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.event_name == 'release' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
         with:
+          body_path: RELEASE_NOTES.md
           files: |
             freebsd_386_client.tar.gz
             freebsd_386_server.tar.gz
@@ -97,6 +98,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.event_name == 'release' || github.event_name == 'workflow_dispatch' || github.event_name == 'push'
         with:
+          body_path: RELEASE_NOTES.md
           files: |
             android_client.apk
           tag_name: ${{ github.ref_name }}
@@ -352,6 +354,7 @@ jobs:
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
+          body_path: RELEASE_NOTES.md
           files: release-assets/**/*.zip
           tag_name: ${{ github.ref_name }}
         env:
