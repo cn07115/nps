@@ -7,19 +7,13 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -ldflags="-w -s -extldflags -static" -o nps ./cmd/nps/nps.go
 
-# UPX 压缩二进制(从 ~20MB 压到 ~5MB,与上游 yisier1/nps 6.3MB 镜像一致)
-# 镜像里下载 UPX 工具压缩
-RUN wget -q https://github.com/upx/upx/releases/download/v3.95/upx-3.95-amd64_linux.tar.xz \
-    && tar -xJf upx-3.95-amd64_linux.tar.xz \
-    && cp upx-3.95-amd64_linux/upx /usr/local/bin/upx \
-    && rm -rf upx-3.95-amd64_linux upx-3.95-amd64_linux.tar.xz
-RUN upx --best --lzma nps
-
 # build 阶段预解压 web 模板到 /web (运行时不需要 extractFS,根除 panic)
 RUN mkdir -p /web && cp -r web/static /web/static && cp -r web/views /web/views
 
-# 用回 scratch 基础镜像(与上游 yisier1/nps 一致,~6MB)
-# web 模板已预解压,无需 extractFS;UPX 压缩后 nps 二进制 ~5MB
+# 用回 scratch 基础镜像(与上游 yisier1/nps 一致,~20MB)
+# web 模板已预解压,无需 extractFS
+# 注: 之前尝试加 UPX 压缩(commit 94069ff) 也 panic, 推测 UPX 3.95 对 Go 1.24 embed 段兼容有问题
+# 如果未来 UPX 4.x 解决兼容问题, 可重新加回
 FROM scratch
 COPY --from=builder /web /web
 COPY --from=builder /go/src/ehang.io/nps/nps /nps
