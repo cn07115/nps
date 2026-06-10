@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"ehang.io/nps/lib/acme"
 	"ehang.io/nps/lib/cache"
 	"ehang.io/nps/lib/common"
 	"ehang.io/nps/lib/conn"
@@ -50,41 +51,59 @@ func (https *HttpsServer) Start() error {
 			return
 		} else {
 			if host.CertFilePath == "" || host.KeyFilePath == "" {
-				logs.Debug("加载客户端本地证书")
-				https.handleHttps2(c, serverName, rb, r)
-			} else {
-				logs.Debug("使用上传证书")
-
-				// 判断是路径还是证书，-----BEGIN 开头的为证书
-				if strings.Contains(host.CertFilePath, "-----BEGIN") || strings.Contains(host.KeyFilePath, "-----BEGIN") {
-					logs.Debug("通过上传文件加载证书")
-					https.cert(host, c, rb, host.CertFilePath, host.KeyFilePath)
+				// AutoSSL 模式: 触发 ACME 签证书
+				if host.AutoSSL && host.Scheme == "https" && host.AcmeProviderID > 0 {
+					logs.Info("acme: triggering cert issue for %s (provider %d)", host.Host, host.AcmeProviderID)
+					if err := acme.GetManager().EnsureCert(host.Host, host.AcmeProviderID); err != nil {
+						logs.Error("acme: ensure cert failed for %s: %v", host.Host, err)
+						c.Close()
+						return
+					}
+					// 重新查 host(manager 已把 cert path 写回)
+					host, err = file.GetDb().GetInfoByHost(serverName, r)
+					if err != nil || host.CertFilePath == "" {
+						logs.Error("acme: host re-lookup failed for %s", serverName)
+						c.Close()
+						return
+					}
+					// 走证书加载分支(fall through)
 				} else {
-					logs.Debug("通过路径加载证书")
-					if !common.FileExists(host.CertFilePath) || !common.FileExists(host.KeyFilePath) {
-						c.Close()
-						logs.Error("证书或秘钥文件不存在", host.KeyFilePath, host.CertFilePath)
-						return
-					}
+					logs.Debug("加载客户端本地证书")
+					https.handleHttps2(c, serverName, rb, r)
+					return
+				}
+			}
+			logs.Debug("使用上传证书")
 
-					cert, err := common.ReadAllFromFile(host.CertFilePath)
-					if err != nil {
-						c.Close()
-						logs.Error("加载证书失败", err)
-						return
-					}
-					key, err := common.ReadAllFromFile(host.KeyFilePath)
-					if err != nil {
-						c.Close()
-						logs.Error("加载证书秘钥失败", err)
-						return
-					}
-
-					https.cert(host, c, rb, string(cert), string(key))
-
+			// 判断是路径还是证书，-----BEGIN 开头的为证书
+			if strings.Contains(host.CertFilePath, "-----BEGIN") || strings.Contains(host.KeyFilePath, "-----BEGIN") {
+				logs.Debug("通过上传文件加载证书")
+				https.cert(host, c, rb, host.CertFilePath, host.KeyFilePath)
+			} else {
+				logs.Debug("通过路径加载证书")
+				if !common.FileExists(host.CertFilePath) || !common.FileExists(host.KeyFilePath) {
+					c.Close()
+					logs.Error("证书或秘钥文件不存在", host.KeyFilePath, host.CertFilePath)
+					return
 				}
 
+				cert, err := common.ReadAllFromFile(host.CertFilePath)
+				if err != nil {
+					c.Close()
+					logs.Error("加载证书失败", err)
+					return
+				}
+				key, err := common.ReadAllFromFile(host.KeyFilePath)
+				if err != nil {
+					c.Close()
+					logs.Error("加载证书秘钥失败", err)
+					return
+				}
+
+				https.cert(host, c, rb, string(cert), string(key))
+
 			}
+
 		}
 	})
 

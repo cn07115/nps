@@ -326,26 +326,35 @@ func (s *IndexController) AddHost() {
 		s.Data["client_id"] = s.getEscapeString("client_id")
 		s.Data["menu"] = "host"
 		s.SetInfo("add host")
+		s.Data["sslConfigs"] = file.GetDb().GetAllSslConfigs()
 		s.display("index/hadd")
 	} else {
 		id := int(file.GetDb().JsonDb.GetHostId())
 		h := &file.Host{
-			Id:           id,
-			Host:         s.getEscapeString("host"),
-			Target:       &file.Target{TargetStr: s.getEscapeString("target"), LocalProxy: s.GetBoolNoErr("local_proxy")},
-			HeaderChange: s.getEscapeString("header"),
-			HostChange:   s.getEscapeString("hostchange"),
-			Remark:       s.getEscapeString("remark"),
-			Location:     s.getEscapeString("location"),
-			Flow:         &file.Flow{},
-			Scheme:       s.getEscapeString("scheme"),
-			KeyFilePath:  s.getEscapeString("key_file_path"),
-			CertFilePath: s.getEscapeString("cert_file_path"),
-			AutoHttps:    s.GetBoolNoErr("AutoHttps"),
+			Id:             id,
+			Host:           s.getEscapeString("host"),
+			Target:         &file.Target{TargetStr: s.getEscapeString("target"), LocalProxy: s.GetBoolNoErr("local_proxy")},
+			HeaderChange:   s.getEscapeString("header"),
+			HostChange:     s.getEscapeString("hostchange"),
+			Remark:         s.getEscapeString("remark"),
+			Location:       s.getEscapeString("location"),
+			Flow:           &file.Flow{},
+			Scheme:         s.getEscapeString("scheme"),
+			KeyFilePath:    s.getEscapeString("key_file_path"),
+			CertFilePath:   s.getEscapeString("cert_file_path"),
+			AutoHttps:      s.GetBoolNoErr("AutoHttps"),
+			AutoSSL:        s.GetBoolNoErr("AutoSSL"),
+			AcmeProviderID: s.GetIntNoErr("AcmeProviderID"),
 		}
 
 		if h.Scheme == "http" {
 			h.AutoHttps = false
+			h.AutoSSL = false
+		}
+		// AutoSSL 需要 provider
+		if h.AutoSSL && h.AcmeProviderID == 0 {
+			s.AjaxErr("启用自动 SSL 必须先在 SSL 证书页面配置 DNS 厂商")
+			return
 		}
 
 		var err error
@@ -372,6 +381,7 @@ func (s *IndexController) EditHost() {
 		} else {
 			s.Data["h"] = h
 		}
+		s.Data["sslConfigs"] = file.GetDb().GetAllSslConfigs()
 		s.SetInfo("edit")
 		s.display("index/hedit")
 	} else {
@@ -404,9 +414,16 @@ func (s *IndexController) EditHost() {
 			h.CertFilePath = s.getEscapeString("cert_file_path")
 			h.Target.LocalProxy = s.GetBoolNoErr("local_proxy")
 			h.AutoHttps = s.GetBoolNoErr("AutoHttps")
+			h.AutoSSL = s.GetBoolNoErr("AutoSSL")
+			h.AcmeProviderID = s.GetIntNoErr("AcmeProviderID")
 
 			if h.Scheme == "http" {
 				h.AutoHttps = false
+				h.AutoSSL = false
+			}
+			if h.AutoSSL && h.AcmeProviderID == 0 {
+				s.AjaxErr("启用自动 SSL 必须先在 SSL 证书页面配置 DNS 厂商")
+				return
 			}
 
 			file.GetDb().JsonDb.StoreHostToJsonFile()

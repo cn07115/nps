@@ -45,6 +45,34 @@
                         </div>
                     </div>
 
+                    <div class="form-group" id="auto_ssl_div">
+                        <label class="control-label font-bold">自动 SSL(ACME / Let's Encrypt)</label>
+                        <div class="col-sm-10">
+                            <select class="form-control" name="AutoSSL" id="auto_ssl_select">
+                                <option {{if eq false .h.AutoSSL}}selected{{end}} value="0" langtag="word-no"></option>
+                                <option {{if eq true .h.AutoSSL}}selected{{end}} value="1" langtag="word-yes"></option>
+                            </select>
+                            <span class="help-block m-b-none">
+                                启用后,首次 HTTPS 访问时 nps 会自动通过 ACME 签发 Let's Encrypt 免费证书,并自动续期。
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="form-group" id="acme_provider_div">
+                        <label class="control-label font-bold">DNS 配置</label>
+                        <div class="col-sm-10">
+                            <select class="form-control" name="AcmeProviderID" id="acme_provider_select">
+                                <option value="0">-- 请选择 --</option>
+                                {{range .sslConfigs}}
+                                <option value="{{.Id}}" {{if eq $.h.AcmeProviderID .Id}}selected{{end}}>{{.Name}}({{.Provider}})</option>
+                                {{end}}
+                            </select>
+                            <span class="help-block m-b-none">
+                                <strong style="color:red">没有配置?先去 <a href="/ssl/index">SSL 证书</a> 页面添加。</strong>
+                            </span>
+                        </div>
+                    </div>
+
                     <div class="form-group" id="cert_file">
                         <label class="control-label font-bold" langtag="word-httpscert"></label>
                         <div class="col-sm-10">

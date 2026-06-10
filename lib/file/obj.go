@@ -184,23 +184,47 @@ type Health struct {
 }
 
 type Host struct {
-	Id           int
-	Host         string //host
-	HeaderChange string //header change
-	HostChange   string //host change
-	Location     string //url router
-	Remark       string //remark
-	Scheme       string //http https all
-	CertFilePath string
-	KeyFilePath  string
-	NoStore      bool
-	IsClose      bool
-	AutoHttps    bool // 自动https
-	Flow         *Flow
-	Client       *Client
-	Target       *Target //目标
-	Health       `json:"-"`
+	Id              int
+	Host            string //host
+	HeaderChange    string //header change
+	HostChange      string //host change
+	Location        string //url router
+	Remark          string //remark
+	Scheme          string //http https all
+	CertFilePath    string
+	KeyFilePath     string
+	NoStore         bool
+	IsClose         bool
+	AutoHttps       bool        // 自动https (301 跳转)
+	AutoSSL         bool        // 启用 ACME 自动 SSL
+	AcmeProviderID  int         // 引用 SslConfig.Id, 0 = 手动模式
+	Flow            *Flow
+	Client          *Client
+	Target          *Target //目标
+	Health          `json:"-"`
 	sync.RWMutex
+}
+
+// SslConfig 表示一个 DNS 厂商 + API key 配置,host 可以引用它来实现自动 SSL
+type SslConfig struct {
+	Id         int
+	Name       string // 用户起的名称,比如 "我的阿里云"
+	Provider   string // DNS 厂商: alidns / dnspod / cloudflare / huaweicloud / manual
+	KeyID      string // DNS API key ID (AccessKeyId / SecretId / API Token) 明文存
+	KeySecret  string // DNS API key Secret, AES 加密后存
+	Extra      string // JSON 扩展字段(比如 Cloudflare Zone ID)
+	CreatedAt  int64  // 创建时间戳
+}
+
+// 存储时用这个,避免 KeySecret 字段被 JSON 序列化时暴露
+type sslConfigPersist struct {
+	Id        int    `json:"id"`
+	Name      string `json:"name"`
+	Provider  string `json:"provider"`
+	KeyID     string `json:"key_id"`
+	KeySecret string `json:"key_secret"` // 密文
+	Extra     string `json:"extra"`
+	CreatedAt int64  `json:"created_at"`
 }
 
 type Target struct {

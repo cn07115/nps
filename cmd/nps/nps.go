@@ -2,7 +2,9 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"ehang.io/nps/bridge"
+	"ehang.io/nps/lib/acme"
 	"ehang.io/nps/lib/daemon"
 	"ehang.io/nps/server"
 	"flag"
@@ -447,6 +449,11 @@ func run() {
 		timeout = 60
 	}
 	go server.StartNewServer(bridgePort, task, beego.AppConfig.String("bridge_type"), timeout)
+
+	// 启动 ACME 自动证书管理后台续期 goroutine
+	acmeCtx, acmeCancel := context.WithCancel(context.Background())
+	defer acmeCancel()
+	acme.GetManager().Init(acmeCtx)
 }
 
 func initConfig(confDir string) {

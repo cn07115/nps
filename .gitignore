@@ -1,5 +1,11 @@
 .idea
 nps
+nps.exe
+npc.exe
+*.exe
+*.test
+*.out
 .opencode/
 AGENTS.md
 .harness/
+dist/

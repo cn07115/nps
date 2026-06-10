@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"ehang.io/nps/lib/common"
 	"ehang.io/nps/lib/crypt"
@@ -31,6 +32,7 @@ func GetDb() *DbUtils {
 		jsonDb.LoadTaskFromJsonFile()
 		jsonDb.LoadHostFromJsonFile()
 		jsonDb.LoadGlobalFromJsonFile()
+		jsonDb.LoadSslConfigsFromJsonFile()
 		Db = &DbUtils{JsonDb: jsonDb}
 	})
 	return Db
@@ -395,4 +397,50 @@ func (s *DbUtils) GetInfoByHost(host string, r *http.Request) (h *Host, err erro
 	}
 	err = errors.New("The host could not be parsed")
 	return
+}
+
+// ==================== SslConfig CRUD ====================
+
+func (s *DbUtils) NewSslConfig(t *SslConfig) error {
+	if t.Id == 0 {
+		t.Id = int(s.JsonDb.GetSslConfigId())
+	}
+	if t.CreatedAt == 0 {
+		t.CreatedAt = time.Now().Unix()
+	}
+	s.JsonDb.SslConfigs.Store(t.Id, t)
+	s.JsonDb.StoreSslConfigsToJsonFile()
+	return nil
+}
+
+func (s *DbUtils) GetSslConfig(id int) (c *SslConfig, err error) {
+	if v, ok := s.JsonDb.SslConfigs.Load(id); ok {
+		c = v.(*SslConfig)
+		return
+	}
+	err = errors.New("SSL config not found")
+	return
+}
+
+func (s *DbUtils) GetAllSslConfigs() []*SslConfig {
+	list := make([]*SslConfig, 0)
+	s.JsonDb.SslConfigs.Range(func(key, value interface{}) bool {
+		if c, ok := value.(*SslConfig); ok {
+			list = append(list, c)
+		}
+		return true
+	})
+	return list
+}
+
+func (s *DbUtils) DelSslConfig(id int) error {
+	s.JsonDb.SslConfigs.Delete(id)
+	s.JsonDb.StoreSslConfigsToJsonFile()
+	return nil
+}
+
+func (s *DbUtils) UpdateSslConfig(t *SslConfig) error {
+	s.JsonDb.SslConfigs.Store(t.Id, t)
+	s.JsonDb.StoreSslConfigsToJsonFile()
+	return nil
 }

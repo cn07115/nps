@@ -21,6 +21,7 @@ func NewJsonDb(runPath string) *JsonDb {
 		HostFilePath:   filepath.Join(runPath, "conf", "hosts.json"),
 		ClientFilePath: filepath.Join(runPath, "conf", "clients.json"),
 		GlobalFilePath: filepath.Join(runPath, "conf", "global.json"),
+		SslConfigFilePath: filepath.Join(runPath, "conf", "ssl_configs.json"),
 	}
 }
 
@@ -30,14 +31,17 @@ type JsonDb struct {
 	HostsTmp         sync.Map
 	Clients          sync.Map
 	Global           *Glob
+	SslConfigs       sync.Map // DNS 厂商 + API key 配置
 	RunPath          string
-	ClientIncreaseId int32  //client increased id
-	TaskIncreaseId   int32  //task increased id
-	HostIncreaseId   int32  //host increased id
+	ClientIncreaseId int32 //client increased id
+	TaskIncreaseId   int32 //task increased id
+	HostIncreaseId   int32 //host increased id
+	SslConfigIncreaseId int32 // ssl config increased id
 	TaskFilePath     string //task file path
 	HostFilePath     string //host file path
 	ClientFilePath   string //client file path
 	GlobalFilePath   string //global file path
+	SslConfigFilePath string // ssl config file path
 }
 
 func (s *JsonDb) LoadTaskFromJsonFile() {
@@ -145,6 +149,40 @@ func (s *JsonDb) StoreGlobalToJsonFile() {
 	globalLock.Unlock()
 }
 
+var sslConfigLock sync.Mutex
+
+func (s *JsonDb) LoadSslConfigsFromJsonFile() {
+	loadSyncMapFromFile(s.SslConfigFilePath, func(v string) {
+		if v == "" {
+			return
+		}
+		var persist sslConfigPersist
+		if err := json.Unmarshal([]byte(v), &persist); err != nil {
+			logs.Error("load ssl config: %v", err)
+			return
+		}
+		cfg := &SslConfig{
+			Id:        persist.Id,
+			Name:      persist.Name,
+			Provider:  persist.Provider,
+			KeyID:     persist.KeyID,
+			KeySecret: persist.KeySecret, // 已经是密文,运行时按需解密
+			Extra:     persist.Extra,
+			CreatedAt: persist.CreatedAt,
+		}
+		s.SslConfigs.Store(persist.Id, cfg)
+		if persist.Id > int(s.SslConfigIncreaseId) {
+			s.SslConfigIncreaseId = int32(persist.Id)
+		}
+	})
+}
+
+func (s *JsonDb) StoreSslConfigsToJsonFile() {
+	sslConfigLock.Lock()
+	defer sslConfigLock.Unlock()
+	storeSslConfigsToFile(&s.SslConfigs, s.SslConfigFilePath)
+}
+
 func (s *JsonDb) GetClientId() int32 {
 	return atomic.AddInt32(&s.ClientIncreaseId, 1)
 }
@@ -155,6 +193,10 @@ func (s *JsonDb) GetTaskId() int32 {
 
 func (s *JsonDb) GetHostId() int32 {
 	return atomic.AddInt32(&s.HostIncreaseId, 1)
+}
+
+func (s *JsonDb) GetSslConfigId() int32 {
+	return atomic.AddInt32(&s.SslConfigIncreaseId, 1)
 }
 
 func loadSyncMapFromFile(filePath string, f func(value string)) {
@@ -276,5 +318,59 @@ func storeGlobalToFile(m *Glob, filePath string) {
 	err = os.Rename(filePath+".tmp", filePath)
 	if err != nil {
 		logs.Error(err, "store to file err, data will lost")
+	}
+}
+
+func storeSslConfigsToFile(m *sync.Map, filePath string) {
+	file, err := os.Create(filePath + ".tmp")
+	if err != nil {
+		logs.Error("store ssl configs: create tmp file error: %v", err)
+		return
+	}
+	defer func() {
+		file.Close()
+		os.Remove(filePath + ".tmp")
+	}()
+	var writeErr bool
+	m.Range(func(key, value interface{}) bool {
+		cfg, ok := value.(*SslConfig)
+		if !ok {
+			return true
+		}
+		persist := sslConfigPersist{
+			Id:        cfg.Id,
+			Name:      cfg.Name,
+			Provider:  cfg.Provider,
+			KeyID:     cfg.KeyID,
+			KeySecret: cfg.KeySecret,
+			Extra:     cfg.Extra,
+			CreatedAt: cfg.CreatedAt,
+		}
+		b, err := json.Marshal(persist)
+		if err != nil {
+			return true
+		}
+		_, err = file.Write(b)
+		if err != nil {
+			logs.Error("store ssl configs: write error: %v", err)
+			writeErr = true
+			return false
+		}
+		_, err = file.Write([]byte("\n" + common.CONN_DATA_SEQ))
+		if err != nil {
+			logs.Error("store ssl configs: write separator error: %v", err)
+			writeErr = true
+			return false
+		}
+		return true
+	})
+	if writeErr {
+		return
+	}
+	_ = file.Sync()
+	_ = file.Close()
+	err = os.Rename(filePath+".tmp", filePath)
+	if err != nil {
+		logs.Error(err, "store ssl configs to file err, data will lost")
 	}
 }
