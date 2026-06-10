@@ -187,6 +187,9 @@ jobs:
         with:
           go-version-file: ${{ env.GUI_DIR }}/go.mod
           check-latest: true
+      - name: Tidy npc-gui go module
+        run: go mod tidy
+        working-directory: ${{ env.GUI_DIR }}
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
         working-directory: ${{ env.GUI_DIR }}
@@ -250,6 +253,9 @@ jobs:
         with:
           go-version-file: ${{ env.GUI_DIR }}/go.mod
           check-latest: true
+      - name: Tidy npc-gui go module
+        run: go mod tidy
+        working-directory: ${{ env.GUI_DIR }}
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
         working-directory: ${{ env.GUI_DIR }}
@@ -314,6 +320,9 @@ jobs:
         with:
           go-version-file: ${{ env.GUI_DIR }}/go.mod
           check-latest: true
+      - name: Tidy npc-gui go module
+        run: go mod tidy
+        working-directory: ${{ env.GUI_DIR }}
       - name: Install Wails CLI
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${{ env.WAILS_VERSION }}
         working-directory: ${{ env.GUI_DIR }}
