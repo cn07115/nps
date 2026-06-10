@@ -5,15 +5,22 @@ WORKDIR /go/src/ehang.io/nps
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-w -s -extldflags -static" ./cmd/nps/nps.go
+RUN CGO_ENABLED=0 go build -ldflags="-w -s -extldflags -static" -o nps ./cmd/nps/nps.go
+
+# UPX 压缩二进制(从 ~20MB 压到 ~5MB,与上游 yisier1/nps 6.3MB 镜像一致)
+# 镜像里下载 UPX 工具压缩
+RUN wget -q https://github.com/upx/upx/releases/download/v3.95/upx-3.95-amd64_linux.tar.xz \
+    && tar -xJf upx-3.95-amd64_linux.tar.xz \
+    && cp upx-3.95-amd64_linux/upx /usr/local/bin/upx \
+    && rm -rf upx-3.95-amd64_linux upx-3.95-amd64_linux.tar.xz
+RUN upx --best --lzma nps
 
 # build 阶段预解压 web 模板到 /web (运行时不需要 extractFS,根除 panic)
 RUN mkdir -p /web && cp -r web/static /web/static && cp -r web/views /web/views
 
-# 用 debian:stable-slim 替代 scratch — 完整 rootfs,/web 可写,避免 nps 二进制在容器里的文件操作
-# 兼容性顾虑(scratch 缺失的系统调用/目录)
-FROM debian:stable-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
+# 用回 scratch 基础镜像(与上游 yisier1/nps 一致,~6MB)
+# web 模板已预解压,无需 extractFS;UPX 压缩后 nps 二进制 ~5MB
+FROM scratch
 COPY --from=builder /web /web
 COPY --from=builder /go/src/ehang.io/nps/nps /nps
 VOLUME /conf
