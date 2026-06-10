@@ -7,7 +7,14 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -ldflags="-w -s -extldflags -static" ./cmd/nps/nps.go
 
-FROM scratch
-COPY --from=builder /go/src/ehang.io/nps/nps /
+# build 阶段预解压 web 模板到 /web (运行时不需要 extractFS,根除 panic)
+RUN mkdir -p /web && cp -r web/static /web/static && cp -r web/views /web/views
+
+# 用 debian:stable-slim 替代 scratch — 完整 rootfs,/web 可写,避免 nps 二进制在容器里的文件操作
+# 兼容性顾虑(scratch 缺失的系统调用/目录)
+FROM debian:stable-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /web /web
+COPY --from=builder /go/src/ehang.io/nps/nps /nps
 VOLUME /conf
 CMD ["/nps"]
