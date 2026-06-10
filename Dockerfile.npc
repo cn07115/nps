@@ -1,8 +1,10 @@
-FROM golang:1.24 as builder
-ARG GOPROXY=direct
+FROM golang:1.24 AS builder
+ARG GOPROXY=https://proxy.golang.org,direct
 WORKDIR /go/src/ehang.io/nps
+# 单独 copy go.mod/go.sum 以便 layer cache 命中,避免每次源码变动都重跑 go mod download
+COPY go.mod go.sum ./
+RUN go mod download
 COPY . .
-RUN go get -d -v ./... 
 RUN CGO_ENABLED=0 go build -ldflags="-w -s -extldflags -static" ./cmd/npc/npc.go
 
 FROM scratch
