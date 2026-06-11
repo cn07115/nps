@@ -132,9 +132,9 @@
                         return '<span class="badge badge-default">手动</span>';
                     }
                     if (row.CertFilePath && row.KeyFilePath) {
-                        return '<a href="/ssl/certlist" target="_blank"><span class="badge badge-success" title="ACME 证书已部署"><i class="fa fa-lock"></i> 已签</span></a>';
+                        return '<a href="{{.web_base_url}}/ssl/certlist"><span class="badge badge-success" title="ACME 证书已部署"><i class="fa fa-lock"></i> 已签</span></a>';
                     }
-                    return '<a href="/ssl/certlist" target="_blank"><span class="badge badge-warning" title="等待 ACME 签发">申请中</span></a>';
+                    return '<a href="{{.web_base_url}}/ssl/certlist"><span class="badge badge-warning" title="等待 ACME 签发">申请中</span></a>';
                 }
             },
             {
