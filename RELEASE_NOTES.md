@@ -1,4 +1,4 @@
-# nps v0.26.37 更新日志
+# nps v0.26.36 更新日志
 
 ## 新增
 
@@ -15,6 +15,6 @@
 ## Docker
 
 ```bash
-docker pull cn07115/nps:v0.26.37
-docker pull cn07115/npc:v0.26.37
+docker pull cn07115/nps:v0.26.36
+docker pull cn07115/npc:v0.26.36
 ```
