@@ -1,27 +1,20 @@
-# nps v0.26.35 更新日志
+# nps v0.26.37 更新日志
 
 ## 新增
 
-- 客户端列表新增「到期时间」列，空值显示「无限制」
-- 客户端新增/编辑页接入 flatpickr 日期时间选择器，支持 +7/+30/+90/+1年 预设与「清除」快捷，提交前严格校验格式
-- 客户端列表 / 隧道列表 3s 实时刷新，切换后台标签自动暂停、离开页面停止，避免空闲时白打服务器
+- **ACME 全自动 SSL 证书管线**：启用 host 的"自动 SSL"并选 DNS 凭证后，nps 自动调用 Let's Encrypt 签证书并部署，无需手动粘 PEM/Key
+- **证书状态可见**：新增 "SSL 证书状态" 页面，显示每张证书的申请中/已签/续期中/失败/过期状态、过期倒计时、绑定 host、最近错误，支持手动重签
+- **host 列表 SSL 列**：域名解析列表新增 SSL 状态 badge，一眼看出哪些 host 已部署证书
+- **host 编辑页查看自动证书**：启用 ACME 的 host 在编辑页可直接查看自动签发的 PEM/Key 全文
 
 ## 修复
 
-- 新建客户端 ID 默认从 1 开始：NoStore 客户端改用 Id=-1 哨兵值，不再消耗真实 id
-- 编辑客户端改回未到期时间后自动恢复 Status，npc 下次重连即可过校验，不再卡在 Validation key incorrect
-- 首页 IP 限制 / P2P 端口 / 服务端 IP 配置空值兜底，默认配置也能正常渲染
-- 版权年份 2018-2020 → 2018-2026
-- `nps update` / `npc update` 自动更新地址切到本 fork (`cn07115/nps`)，避免拉到上游旧版
-- Dockerfile 改用 `go mod download` + Go module proxy，修复 Docker build 在 `google.golang.org/protobuf` unshallow 时撞 GitHub 503 限流的问题
-
-## 优化
-
-- 补全缺失的 `web/static/css/flatpickr.min.css`，限制日历字体大小避免被基础样式放大
+- 修复 `web/views/ssl/index.html` 等模板引用不存在的 `header.html`/`footer.html` 导致 Docker 镜像启动 panic 的问题
+- Docker 镜像改用 `FROM scratch` + 预解压 web 模板，镜像大小从 85MB 降至 10.9MB
 
 ## Docker
 
 ```bash
-docker pull cn07115/nps:v0.26.35
-docker pull cn07115/npc:v0.26.35
+docker pull cn07115/nps:v0.26.37
+docker pull cn07115/npc:v0.26.37
 ```
