@@ -82,6 +82,12 @@ func newLegoClient(cfg *file.SslConfig) (*lego.Client, error) {
 	if secret == "" {
 		return nil, fmt.Errorf("key secret 为空,请检查 SSL 凭证配置(Key Secret 字段必须填写,留空会导致签证书失败)")
 	}
+	// debug: 只打前 4 字符前缀,避免泄露完整 secret
+	if len(secret) > 4 {
+		logs.Info("acme: provider %s secret loaded ok (prefix=%s...)", cfg.Provider, secret[:4])
+	} else {
+		logs.Info("acme: provider %s secret loaded ok (len=%d)", cfg.Provider, len(secret))
+	}
 	// 构造 DNS provider
 	var provider LegoProvider
 	switch cfg.Provider {

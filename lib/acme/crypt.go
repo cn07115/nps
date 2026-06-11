@@ -20,31 +20,37 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"ehang.io/nps/lib/common"
 )
 
 // deriveMachineKey 根据机器指纹派生 AES-256 key
-// 优先级: env NPS_MASTER_KEY > 机器指纹( hostname + machine-id / registry )
+// 优先级: env NPS_MASTER_KEY > 持久化到 /conf/.acme_master_key > 机器指纹
 // 这样: 同台机器多次启动密文能解; 换机器后需要重新填 API key
 func deriveMachineKey() []byte {
 	if envKey := os.Getenv("NPS_MASTER_KEY"); envKey != "" {
 		h := sha256.Sum256([]byte("nps-acme:" + envKey))
 		return h[:]
 	}
+	// 优先从 /conf/.acme_master_key 读取(由启动时一次性写入,稳定)
+	// 这样 Docker 容器重启 / hostname 变化不影响解密
+	keyPath := filepath.Join(os.Getenv("NPS_RUN_PATH"), ".acme_master_key")
+	if keyPath == "" {
+		keyPath = filepath.Join(common.GetRunPath(), ".acme_master_key")
+	}
+	if data, err := os.ReadFile(keyPath); err == nil && len(data) == 32 {
+		return data
+	}
+	// 启动时一次性生成并持久化
 	parts := []string{runtime.GOOS, runtime.GOARCH}
 	if host, err := os.Hostname(); err == nil {
 		parts = append(parts, host)
 	}
-	// Linux 优先读 /etc/machine-id
 	if data, err := os.ReadFile("/etc/machine-id"); err == nil {
 		parts = append(parts, strings.TrimSpace(string(data)))
 	}
-	// Windows 读 MachineGuid
-	if runtime.GOOS == "windows" {
-		if data, err := os.ReadFile(`C:\Windows\System32\config\systemprofile\AppData\Local\Microsoft\Windows\etc\hostid`); err == nil {
-			parts = append(parts, strings.TrimSpace(string(data)))
-		}
-	}
 	h := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	_ = os.WriteFile(keyPath, h[:], 0600) // 持久化,后续启动直接用
 	return h[:]
 }
 

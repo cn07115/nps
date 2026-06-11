@@ -177,6 +177,17 @@ func (m *Manager) EnsureCert(domain string, providerID int) error {
 	if !need {
 		return nil
 	}
+	// 解密前的 debug 日志
+	if file.GetDb() != nil {
+		if cfg, err := file.GetDb().GetSslConfig(providerID); err == nil {
+			ciphertextPrefix := cfg.KeySecret
+			if len(ciphertextPrefix) > 12 {
+				ciphertextPrefix = ciphertextPrefix[:12] + "..."
+			}
+			logs.Info("acme: EnsureCert domain=%s providerID=%d provider=%s keyID=%q keySecretCipherPrefix=%q (len=%d)",
+				domain, providerID, cfg.Provider, cfg.KeyID, ciphertextPrefix, len(cfg.KeySecret))
+		}
+	}
 	// 标记状态
 	if m.state != nil {
 		// 区分 sign 是不是续期(证书文件已存在 -> 续期)
