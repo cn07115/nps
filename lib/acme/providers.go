@@ -105,6 +105,7 @@ func newLegoClient(cfg *file.SslConfig) (*lego.Client, error) {
 	case "cloudflare":
 		p, err := cloudflare.NewDNSProviderConfig(&cloudflare.Config{
 			AuthToken: secret,
+			TTL:       120, // lego 默认 0 会校验失败,设最小 120
 		})
 		if err != nil {
 			return nil, fmt.Errorf("cloudflare config: %w", err)
