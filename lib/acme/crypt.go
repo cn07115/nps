@@ -20,24 +20,20 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-
-	"ehang.io/nps/lib/common"
 )
 
 // deriveMachineKey 根据机器指纹派生 AES-256 key
-// 优先级: env NPS_MASTER_KEY > 持久化到 /conf/.acme_master_key > 机器指纹
+// 优先级: env NPS_MASTER_KEY > 持久化到 .acme_master_key > 机器指纹
 // 这样: 同台机器多次启动密文能解; 换机器后需要重新填 API key
 func deriveMachineKey() []byte {
 	if envKey := os.Getenv("NPS_MASTER_KEY"); envKey != "" {
 		h := sha256.Sum256([]byte("nps-acme:" + envKey))
 		return h[:]
 	}
-	// 优先从 /conf/.acme_master_key 读取(由启动时一次性写入,稳定)
+	// 优先从 confDir/.acme_master_key 读取(由启动时一次性写入,稳定)
 	// 这样 Docker 容器重启 / hostname 变化不影响解密
-	keyPath := filepath.Join(os.Getenv("NPS_RUN_PATH"), ".acme_master_key")
-	if keyPath == "" {
-		keyPath = filepath.Join(common.GetRunPath(), ".acme_master_key")
-	}
+	confDir := resolveConfDir()
+	keyPath := filepath.Join(confDir, ".acme_master_key")
 	if data, err := os.ReadFile(keyPath); err == nil && len(data) == 32 {
 		return data
 	}
@@ -52,6 +48,21 @@ func deriveMachineKey() []byte {
 	h := sha256.Sum256([]byte(strings.Join(parts, "|")))
 	_ = os.WriteFile(keyPath, h[:], 0600) // 持久化,后续启动直接用
 	return h[:]
+}
+
+// resolveConfDir 推断 conf 目录,不依赖 lib/common(避免循环 import)
+// 优先级: NPS_RUN_PATH env > /etc/nps > 当前目录 ./conf
+func resolveConfDir() string {
+	if p := os.Getenv("NPS_RUN_PATH"); p != "" {
+		return p
+	}
+	if runtime.GOOS == "windows" {
+		return `C:\Program Files\nps`
+	}
+	if _, err := os.Stat("/etc/nps"); err == nil {
+		return "/etc/nps"
+	}
+	return "."
 }
 
 // Encrypt 用 AES-256-GCM 加密明文,返回 base64(nonce || ciphertext)

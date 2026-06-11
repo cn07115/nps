@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ehang.io/nps/lib/file"
+	"github.com/astaxie/beego/logs"
 	"github.com/go-acme/lego/v4/certificate"
 	"github.com/go-acme/lego/v4/lego"
 	"github.com/go-acme/lego/v4/providers/dns/alidns"
