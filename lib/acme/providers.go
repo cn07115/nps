@@ -79,6 +79,9 @@ func newLegoClient(cfg *file.SslConfig) (*lego.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("decrypt key secret failed: %w", err)
 	}
+	if secret == "" {
+		return nil, fmt.Errorf("key secret 为空,请检查 SSL 凭证配置(Key Secret 字段必须填写,留空会导致签证书失败)")
+	}
 	// 构造 DNS provider
 	var provider LegoProvider
 	switch cfg.Provider {
