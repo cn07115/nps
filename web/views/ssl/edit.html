@@ -25,31 +25,31 @@
                     </div>
                     <div class="form-group">
                         <label class="col-sm-2 control-label">
-                            <span id="keyid-label">AccessKeyId / API Token</span>
+                            <span id="keyid-label">Key ID</span>
                         </label>
                         <div class="col-sm-10">
-                            <input class="form-control" name="key_id" value="{{.cfg.KeyID}}" placeholder="不同厂商字段不同,详见说明" />
-                            <span class="help-block m-b-none">
-                                <strong>阿里云:</strong> AccessKeyId<br/>
-                                <strong>腾讯云:</strong> SecretId<br/>
-                                <strong>华为云:</strong> Access Key Id(AK)<br/>
-                                <strong>Cloudflare:</strong> Zone ID(写到 Extra 字段)+ API Token(下方)
+                            <input class="form-control" name="key_id" id="keyid-input" value="{{.cfg.KeyID}}" />
+                            <span class="help-block m-b-none" id="keyid-hint">
+                                <i class="fa fa-info-circle"></i> <span id="keyid-hint-text">请先选择 DNS 厂商</span>
                             </span>
                         </div>
                     </div>
                     <div class="form-group">
-                        <label class="col-sm-2 control-label">API Secret</label>
+                        <label class="col-sm-2 control-label" id="keysecret-label">API Secret</label>
                         <div class="col-sm-10">
-                            <input class="form-control" type="password" name="key_secret" placeholder="留空表示不修改" />
+                            <input class="form-control" type="password" name="key_secret" id="keysecret-input" placeholder="留空表示不修改" />
                             <span class="help-block m-b-none text-warning">
-                                敏感字段,AES 加密后存储;建议使用 DNS 厂商的 RAM / IAM 子账号凭证,只授予 DNS 解析权限。
+                                <i class="fa fa-lock"></i> 敏感字段,AES 加密后存储;建议使用 DNS 厂商的 RAM / IAM 子账号凭证,只授予 DNS 解析权限。
                             </span>
                         </div>
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" id="extra-group">
                         <label class="col-sm-2 control-label">扩展字段(可选)</label>
                         <div class="col-sm-10">
-                            <input class="form-control" name="extra" value="{{.cfg.Extra}}" placeholder='JSON 格式,比如 Cloudflare Zone ID' />
+                            <input class="form-control" name="extra" id="extra-input" value="{{.cfg.Extra}}" />
+                            <span class="help-block m-b-none" id="extra-hint">
+                                <span id="extra-hint-text"></span>
+                            </span>
                         </div>
                     </div>
                     <div class="form-group">
@@ -65,6 +65,67 @@
 </div>
 <script>
 $(function() {
+    // 字段映射表(provider -> {label, placeholder, hint, secret_label, secret_placeholder, secret_hint, extra_label, extra_placeholder, extra_hint, show_extra})
+    var fieldMap = {
+        'alidns': {
+            label: 'AccessKeyId',
+            placeholder: '如:LTAI5txxxxxxxxxxxx',
+            hint: '阿里云 RAM 控制台创建 AccessKey,只授予 AliyunDNSFullAccess(或更小权限)。',
+            secret_label: 'AccessKeySecret',
+            secret_placeholder: 'AccessKey Secret(32 位)',
+            show_extra: false
+        },
+        'dnspod': {
+            label: 'SecretId',
+            placeholder: '如:AKIDxxxxxxxxxxxx',
+            hint: '腾讯云 API 密钥管理创建 SecretId,只授予 DNSPod 读写权限。',
+            secret_label: 'SecretKey',
+            secret_placeholder: 'SecretKey(32 位)',
+            show_extra: false
+        },
+        'cloudflare': {
+            label: 'Account ID',
+            placeholder: '如:bf2664cd89b81d5ee4f754610f6570fe',
+            hint: 'Cloudflare 右侧栏 "Account ID"(不是 Zone ID)。',
+            secret_label: 'API Token',
+            secret_placeholder: '令牌,格式如 cfat_xxxxxxxx',
+            show_extra: false
+        },
+        'huaweicloud': {
+            label: 'Access Key Id(AK)',
+            placeholder: '如:AKxxxxxxxxxxxx',
+            hint: '华为云 IAM 用户创建 Access Key,只授予 DNS 解析权限。',
+            secret_label: 'Secret Access Key(SK)',
+            secret_placeholder: 'Secret Access Key',
+            show_extra: false
+        }
+    };
+
+    function updateFields() {
+        var p = $('#provider-select').val();
+        var cfg = fieldMap[p];
+        if (!cfg) return;
+        $('#keyid-label').text(cfg.label);
+        $('#keyid-input').attr('placeholder', cfg.placeholder);
+        $('#keyid-hint-text').text(cfg.hint);
+        $('#keysecret-label').text(cfg.secret_label);
+        $('#keysecret-input').attr('placeholder', cfg.secret_placeholder);
+        if (cfg.show_extra) {
+            $('#extra-group').show();
+            $('#extra-input').attr('placeholder', cfg.extra_placeholder || '');
+            $('#extra-hint-text').text(cfg.extra_hint || '');
+        } else {
+            $('#extra-group').hide();
+        }
+    }
+
+    // 初始化:用当前 select 值
+    updateFields();
+
+    // 切换时更新
+    $('#provider-select').on('change', updateFields);
+
+    // 提交
     $('#ssl-form').on('submit', function(e) {
         e.preventDefault();
         $.post('/ssl/save', $(this).serialize(), function(r) {
