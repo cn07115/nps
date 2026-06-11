@@ -17,8 +17,8 @@ import (
 const (
 	// RenewThreshold 证书多少天内到期则续期
 	RenewThreshold = 30
-	// ScanInterval 后台扫描间隔
-	ScanInterval = 24 * time.Hour
+	// ScanInterval 后台扫描间隔(1 小时兜底)
+	ScanInterval = 1 * time.Hour
 	// SignTimeout 单个域名签发的超时
 	SignTimeout = 5 * time.Minute
 )
@@ -27,6 +27,7 @@ const (
 // 启动时 Init(),host 触发签发时 EnsureCert(),后台定时 RenewAll()
 type Manager struct {
 	store     *CertStore
+	state     *CertStoreState // 状态层(certs.json)
 	mu        sync.Mutex
 	signLocks map[string]*sync.Mutex // 每个 domain 一把锁,防止并发签发
 }
@@ -45,12 +46,31 @@ func GetManager() *Manager {
 			logs.Error("acme: create cert store: %v", err)
 			return
 		}
+		state, err := NewCertStoreState(common.GetRunPath())
+		if err != nil {
+			logs.Error("acme: create cert state: %v", err)
+			return
+		}
+		if err := state.Load(); err != nil {
+			logs.Error("acme: load cert state: %v", err)
+		}
 		globalManager = &Manager{
 			store:     store,
+			state:     state,
 			signLocks: make(map[string]*sync.Mutex),
 		}
 	})
 	return globalManager
+}
+
+// GetState 返回状态层(只读语义,不要在外面写)
+func (m *Manager) GetState() *CertStoreState {
+	return m.state
+}
+
+// GetStore 返回 certstore(给 web controller 读 PEM 用)
+func (m *Manager) GetStore() *CertStore {
+	return m.store
 }
 
 // Init 启动后台续期 goroutine
@@ -61,22 +81,19 @@ func (m *Manager) Init(ctx context.Context) {
 	go m.runRenewer(ctx)
 }
 
-// runRenewer 每天扫一次,30 天内到期的证书自动续期
+// runRenewer 每小时兜底: 扫所有 AutoSSL host 触发 cert 处理
+// (既包括续期, 也包括新启动时漏触发的 host)
 func (m *Manager) runRenewer(ctx context.Context) {
 	t := time.NewTicker(ScanInterval)
 	defer t.Stop()
-	// 启动时先跑一次
-	if err := m.RenewAll(); err != nil {
-		logs.Error("acme: initial renew: %v", err)
-	}
+	// 启动时先跑一次(覆盖到所有 AutoSSL host)
+	m.TriggerAll()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			if err := m.RenewAll(); err != nil {
-				logs.Error("acme: periodic renew: %v", err)
-			}
+			m.TriggerAll()
 		}
 	}
 }
@@ -160,7 +177,62 @@ func (m *Manager) EnsureCert(domain string, providerID int) error {
 	if !need {
 		return nil
 	}
+	// 标记状态
+	if m.state != nil {
+		// 区分 sign 是不是续期(证书文件已存在 -> 续期)
+		if m.store.Exists(domain) {
+			m.state.MarkRenewing(domain)
+		} else {
+			m.state.MarkPending(domain, nil)
+		}
+	}
 	return m.sign(domain, providerID, need)
+}
+
+// TriggerCert 异步触发签发(给 host 保存时调用, 不阻塞 HTTP 响应)
+//
+// 与 EnsureCert 区别: 不需要等 cert 存在才返回; goroutine 内部完成全程
+func (m *Manager) TriggerCert(domain string, providerID int, hostID int) {
+	if m == nil {
+		return
+	}
+	if m.state != nil {
+		m.state.EnsureRecord(domain, []int{hostID})
+	}
+	go func() {
+		if err := m.EnsureCert(domain, providerID); err != nil {
+			logs.Error("acme: trigger cert %s (host %d): %v", domain, hostID, err)
+		}
+	}()
+}
+
+// TriggerAll 启动时 + 每小时巡检时调用,扫描所有 AutoSSL host
+func (m *Manager) TriggerAll() {
+	if m == nil {
+		return
+	}
+	if file.GetDb() == nil {
+		return
+	}
+	keys := file.GetMapKeys(file.GetDb().JsonDb.Hosts, false, "", "")
+	for _, id := range keys {
+		v, ok := file.GetDb().JsonDb.Hosts.Load(id)
+		if !ok {
+			continue
+		}
+		h, ok := v.(*file.Host)
+		if !ok {
+			continue
+		}
+		if !h.AutoSSL || h.Scheme != "https" || h.AcmeProviderID == 0 {
+			continue
+		}
+		if h.Host == "" {
+			continue
+		}
+		// 异步触发
+		m.TriggerCert(h.Host, h.AcmeProviderID, h.Id)
+	}
 }
 
 // sign 实际签发流程: 用 lego 拿证书 + 私钥 + 存盘
@@ -170,10 +242,18 @@ func (m *Manager) sign(domain string, providerID int, isRenew bool) error {
 	}
 	cfg, err := file.GetDb().GetSslConfig(providerID)
 	if err != nil {
-		return fmt.Errorf("ssl config %d not found: %w", providerID, err)
+		errMsg := fmt.Sprintf("ssl config %d not found", providerID)
+		if m.state != nil {
+			m.state.MarkFailed(domain, errMsg)
+		}
+		return fmt.Errorf("%s: %w", errMsg, err)
 	}
 	legoClient, err := newLegoClient(cfg)
 	if err != nil {
+		errMsg := fmt.Sprintf("lego client: %v", err)
+		if m.state != nil {
+			m.state.MarkFailed(domain, errMsg)
+		}
 		return err
 	}
 	// 构造签发请求
@@ -184,17 +264,34 @@ func (m *Manager) sign(domain string, providerID int, isRenew bool) error {
 	// lego 签发
 	certificates, err := legoClient.Certificate.Obtain(req)
 	if err != nil {
-		return fmt.Errorf("obtain cert: %w", err)
+		errMsg := fmt.Sprintf("obtain cert: %v", err)
+		if m.state != nil {
+			m.state.MarkFailed(domain, errMsg)
+		}
+		return fmt.Errorf("%s: %w", errMsg, err)
 	}
 	// 存盘
 	if err := m.store.Save(domain, certificates.Certificate, certificates.PrivateKey); err != nil {
-		return fmt.Errorf("save cert: %w", err)
+		errMsg := fmt.Sprintf("save cert: %v", err)
+		if m.state != nil {
+			m.state.MarkFailed(domain, errMsg)
+		}
+		return fmt.Errorf("%s: %w", errMsg, err)
+	}
+	// 解析 expires_at
+	expiresAt, _ := m.store.Expiry(domain)
+	issuedAt := time.Now()
+	if m.state != nil {
+		m.state.MarkIssued(domain,
+			m.store.CertPath(domain),
+			m.store.KeyPath(domain),
+			issuedAt, expiresAt)
 	}
 	// 更新 host 的 CertFilePath / KeyFilePath, 让 nps 立即用上
 	// 这样下一次 https 请求进来,会走"有证书"分支, 自动加载
 	m.updateHostCertPath(domain)
 	logs.Info("acme: signed %s (renew=%v), expires %s",
-		domain, isRenew, certificates.CertURL)
+		domain, isRenew, expiresAt.Format(time.RFC3339))
 	return nil
 }
 

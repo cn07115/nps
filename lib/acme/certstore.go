@@ -79,6 +79,19 @@ func (s *CertStore) Exists(domain string) bool {
 	return true
 }
 
+// Delete 删 cert+key 文件
+func (s *CertStore) Delete(domain string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Remove(s.CertPath(domain)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Remove(s.KeyPath(domain)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // Expiry 解析 x509,返回 NotAfter 时间
 func (s *CertStore) Expiry(domain string) (time.Time, error) {
 	data, err := os.ReadFile(s.CertPath(domain))

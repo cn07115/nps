@@ -77,9 +77,29 @@
                         <label class="control-label font-bold" langtag="word-httpscert"></label>
                         <div class="col-sm-10">
                             <textarea rows="6" class="form-control" type="text" name="cert_file_path" id="pemText"
-                                      placeholder="请将证书文件拖拽或将内容复制粘贴到此处，证书文件格式为：xxxx_example.com.pem。
+                                      placeholder="请将证书文件拖拽或将内容复制粘贴到此处,证书文件格式为:xxxx_example.com.pem。
 或者配置证书文件路径。">{{.h.CertFilePath}}</textarea>
+                            {{if .h.AutoSSL}}
+                            <div class="alert alert-info m-t-sm" style="margin-bottom:0">
+                                <i class="fa fa-info-circle"></i> 已启用 ACME 自动 SSL。
+                                证书将自动签发,无需手动填写上方内容。
+                                <button type="button" class="btn btn-xs btn-primary" id="view-auto-cert">
+                                    <i class="fa fa-lock"></i> 查看自动签发的证书
+                                </button>
+                            </div>
+                            <pre id="auto-cert-display" style="display:none; max-height:200px; overflow:auto; background:#f5f5f5; padding:10px; font-size:11px"></pre>
+                            {{end}}
                         </div>
+                    </div>
+                    <div class="form-group" id="key_file">
+                        <label class="control-label font-bold" langtag="word-httpskey"></label>
+                        <div class="col-sm-10">
+                            <textarea rows="6" class="form-control" type="text" name="key_file_path" id="pemKey"
+                                      placeholder="请将私钥文件拖拽或复制粘贴到此处,证书秘钥格式为:xxxx_example.com.key。
+或者配置秘钥文件路径。">{{.h.KeyFilePath}}</textarea>
+                            <pre id="auto-key-display" style="display:none; max-height:200px; overflow:auto; background:#f5f5f5; padding:10px; font-size:11px"></pre>
+                        </div>
+                    </div>
                     </div>
                     <div class="form-group" id="key_file">
                         <label class="control-label font-bold" langtag="word-httpskey"></label>
@@ -206,6 +226,23 @@
                 $("#AutoHttps").css("display", "none")
             }
         })
+
+        // 查看自动签发的证书
+        $('#view-auto-cert').click(function() {
+            var domain = $('input[name="host"]').val();
+            if (!domain) { alert('请先填写 host 域名'); return; }
+            var $btn = $(this);
+            $btn.prop('disabled', true).text('加载中...');
+            $.post('/ssl/certpem', {domain: domain}, function(r) {
+                $btn.prop('disabled', false).html('<i class="fa fa-lock"></i> 查看自动签发的证书');
+                if (r.cert) {
+                    $('#auto-cert-display').text(r.cert).show();
+                    $('#auto-key-display').text(r.key).show();
+                } else {
+                    alert(r.msg || '加载失败,证书可能尚未签发。\n请先到 [SSL 证书状态] 页面查看进度。');
+                }
+            });
+        });
     })
 
 </script>

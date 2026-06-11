@@ -1,10 +1,10 @@
 package controllers
 
 import (
+	"ehang.io/nps/lib/acme"
 	"ehang.io/nps/lib/file"
 	"ehang.io/nps/server"
 	"ehang.io/nps/server/tool"
-
 	"github.com/astaxie/beego"
 )
 
@@ -368,6 +368,10 @@ func (s *IndexController) AddHost() {
 		if err := file.GetDb().NewHost(h); err != nil {
 			s.AjaxErr("add fail" + err.Error())
 		}
+		// 保存即触发 ACME(全自动)
+		if h.AutoSSL && h.Scheme == "https" && h.AcmeProviderID > 0 && h.Host != "" {
+			acme.GetManager().TriggerCert(h.Host, h.AcmeProviderID, h.Id)
+		}
 		s.AjaxOkWithId("add success", id)
 	}
 }
@@ -427,6 +431,16 @@ func (s *IndexController) EditHost() {
 			}
 
 			file.GetDb().JsonDb.StoreHostToJsonFile()
+			// 域名变了,旧的 cert 记录作废
+			oldHostName := ""
+			if old, _ := file.GetDb().GetHostById(h.Id); old != nil {
+				oldHostName = old.Host
+			}
+			// 保存即触发 ACME(全自动)
+			if h.AutoSSL && h.Scheme == "https" && h.AcmeProviderID > 0 && h.Host != "" {
+				acme.GetManager().TriggerCert(h.Host, h.AcmeProviderID, h.Id)
+			}
+			_ = oldHostName // 域名变更清理留给下个版本
 		}
 		s.AjaxOk("modified success")
 	}

@@ -7,6 +7,7 @@ import (
 	"ehang.io/nps/lib/acme"
 	"ehang.io/nps/lib/file"
 	"github.com/astaxie/beego"
+	"github.com/astaxie/beego/logs"
 )
 
 type SslController struct {
@@ -149,6 +150,149 @@ func (s *SslController) GetAll() {
 	}
 	s.Data["json"] = items
 	s.ServeJSON()
+}
+
+// CertList 证书列表页
+func (s *SslController) CertList() {
+	s.Data["menu"] = "ssl"
+	s.SetInfo("SSL 证书状态")
+	s.display("ssl/cert")
+}
+
+// CertListJSON 证书列表 JSON(给 cert 页轮询)
+func (s *SslController) CertListJSON() {
+	mgr := acme.GetManager()
+	if mgr == nil || mgr.GetState() == nil {
+		s.AjaxTable([]interface{}{}, 0, 0, nil)
+		return
+	}
+	records := mgr.GetState().List()
+	// 转化成 ajax 期望的格式
+	type certItem struct {
+		Domain     string `json:"domain"`
+		Status     string `json:"status"`
+		StatusText string `json:"status_text"`
+		ExpiresAt  int64  `json:"expires_at"`
+		ExpiresIn  int    `json:"expires_in_days"`
+		IssuedAt   int64  `json:"issued_at"`
+		LastError  string `json:"last_error"`
+		HostCount  int    `json:"host_count"`
+		HostIDs    []int  `json:"host_ids"`
+	}
+	items := make([]certItem, 0, len(records))
+	for _, r := range records {
+		// 自动检测过期
+		status := string(r.Status)
+		stText := renderStatusText(status)
+		expIn := int(time.Until(time.Unix(r.ExpiresAt, 0)).Hours() / 24)
+		if r.ExpiresAt > 0 && expIn < 0 {
+			status = string(acme.StatusExpired)
+			stText = renderStatusText(status)
+		}
+		items = append(items, certItem{
+			Domain:     r.Domain,
+			Status:     status,
+			StatusText: stText,
+			ExpiresAt:  r.ExpiresAt,
+			ExpiresIn:  expIn,
+			IssuedAt:   r.IssuedAt,
+			LastError:  r.LastError,
+			HostCount:  len(r.HostIDs),
+			HostIDs:    r.HostIDs,
+		})
+	}
+	s.AjaxTable(items, len(items), len(items), nil)
+}
+
+func renderStatusText(s string) string {
+	switch s {
+	case "pending":
+		return "申请中"
+	case "issued":
+		return "已签"
+	case "renewing":
+		return "续期中"
+	case "failed":
+		return "失败"
+	case "expired":
+		return "已过期"
+	default:
+		return s
+	}
+}
+
+// CertPEM 返回某 domain 的 PEM 全文(只读展示, 供 host 编辑页用)
+func (s *SslController) CertPEM() {
+	domain := s.GetString("domain")
+	if domain == "" {
+		s.AjaxErr("domain 不能为空")
+		return
+	}
+	mgr := acme.GetManager()
+	if mgr == nil {
+		s.AjaxErr("manager 未初始化")
+		return
+	}
+	cert, key, err := mgr.GetStore().Get(domain)
+	if err != nil {
+		s.AjaxErr("证书不存在或未签发: " + err.Error())
+		return
+	}
+	s.Data["json"] = map[string]string{
+		"domain": domain,
+		"cert":   string(cert),
+		"key":    string(key),
+	}
+	s.ServeJSON()
+}
+
+// Reissue 手动重签证书
+func (s *SslController) Reissue() {
+	domain := s.GetString("domain")
+	if domain == "" {
+		s.AjaxErr("domain 不能为空")
+		return
+	}
+	mgr := acme.GetManager()
+	if mgr == nil {
+		s.AjaxErr("manager 未初始化")
+		return
+	}
+	// 找这个 domain 对应的 host
+	keys := file.GetMapKeys(file.GetDb().JsonDb.Hosts, false, "", "")
+	var host *file.Host
+	for _, id := range keys {
+		v, ok := file.GetDb().JsonDb.Hosts.Load(id)
+		if !ok {
+			continue
+		}
+		h, ok := v.(*file.Host)
+		if !ok {
+			continue
+		}
+		if h.Host == domain {
+			host = h
+			break
+		}
+	}
+	if host == nil {
+		s.AjaxErr("找不到对应的 host 配置")
+		return
+	}
+	if host.AcmeProviderID == 0 {
+		s.AjaxErr("该 host 未配置 ACME DNS 凭证")
+		return
+	}
+	// 删旧 cert + 状态记录
+	_ = mgr.GetStore().Delete(domain)
+	_ = mgr.GetState().Delete(domain)
+	// 强制重签
+	go func() {
+		if err := mgr.EnsureCert(domain, host.AcmeProviderID); err != nil {
+			logs.Error("acme: manual reissue %s: %v", domain, err)
+		}
+	}()
+	s.AjaxOk("已触发重签,请稍后刷新页面查看状态")
 }
 
 var _ = strconv.Atoi

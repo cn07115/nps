@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"ehang.io/nps/lib/version"
 	"errors"
 	"math"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"ehang.io/nps/bridge"
+	"ehang.io/nps/lib/acme"
 	"ehang.io/nps/lib/common"
 	"ehang.io/nps/lib/file"
 	"ehang.io/nps/server/proxy"
@@ -93,6 +95,10 @@ func StartNewServer(bridgePort int, cnf *file.Tunnel, bridgeType string, bridgeD
 	}
 	// 启动后台 IO 速率采集，Dashboard 直接读缓存，无需 Sleep
 	tool.StartIORateCollector()
+	// 启动 ACME 全自动管理器(加载 certs.json + 1h 兜底巡检)
+	acmeCtx, acmeCancel := context.WithCancel(context.Background())
+	acme.GetManager().Init(acmeCtx)
+	_ = acmeCancel // 进程级,goroutine 跟进程同寿命
 	go func() {
 		if err := Bridge.StartTunnel(); err != nil {
 			logs.Error("start server bridge error", err)
