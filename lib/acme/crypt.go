@@ -21,37 +21,54 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/astaxie/beego"
 	"github.com/astaxie/beego/logs"
 )
 
 // deriveMachineKey 派生 AES-256 master key,用于加密 DNS API key secret
 //
+// 唯一配置入口: nps.conf 的 nps_master_key 字段
+// 全部平台(Docker / 直接跑 nps 二进制 / Windows 服务 / systemd)都改 conf,
+// 避免 env 在不同平台部署姿势不同
+//
 // 优先级(逐级回退,目标是"同密文同进程内任意时刻都能解"):
-//  1. NPS_MASTER_KEY env: 部署时(尤其是容器/1Panel)注入一个固定字符串,
-//     进程内任意位置 Encrypto/Decrypt 都能用同一个 key。**生产强烈建议设置。**
-//  2. confDir/.acme_master_key: 旧版本rc6~rc9走的路径,保留兼容(容器/cwd 不稳
-//     时这个文件可能写在一个不可预期的位置,但能读就说明上次启动成功写过)
-//  3. 机器指纹(hostname + machine-id): 不再**写盘**,只用于"读不到上述两者时"的
-//     最后兜底。**注意**: 这种兜底在容器重启、hostname 变化的场景下会
-//     算出不同 key,导致旧的密文解不开 —— 这是兜底模式固有的弱点。
-//     真要稳,请在部署时设 NPS_MASTER_KEY env。
+//  1. nps.conf nps_master_key 字段: 唯一推荐配置方式
+//  2. confDir/.acme_master_key: rc6~rc9 留传的文件,保留兼容
+//  3. 机器指纹(hostname + machine-id): 最终兜底,不再写盘
+//     **注意**: 容器重启/hostname 变化时会算出不同 key,导致旧密文解不开
+//     —— 兜底模式固有的弱点,生产请用前 2 种之一设置固定值
 func deriveMachineKey() []byte {
-	if envKey := os.Getenv("NPS_MASTER_KEY"); envKey != "" {
-		h := sha256.Sum256([]byte("nps-acme:" + envKey))
+	// 唯一配置入口: nps.conf 的 nps_master_key 字段
+	// 全部平台(Docker / 直接跑 nps 二进制 / Windows 服务 / systemd)都改 conf,
+	// 避免 env 在不同平台部署姿势不同
+	// 优先级: nps.conf nps_master_key > 旧 .acme_master_key 文件 > 自动生成新 key 写盘
+	if confKey := beego.AppConfig.String("nps_master_key"); confKey != "" {
+		h := sha256.Sum256([]byte("nps-acme:" + confKey))
+		logs.Info("acme: master key loaded from nps.conf nps_master_key")
 		return h[:]
 	}
 	// 尝试读旧的 master key 文件(从 rc6~rc9 留传下来的,可能落在任意 confDir)
+	// 兼容老部署: 之前用 hostname 派生的,密钥文件可能还落在某个 confDir
 	confDir := resolveConfDir()
 	keyPath := filepath.Join(confDir, ".acme_master_key")
 	if data, err := os.ReadFile(keyPath); err == nil && len(data) == 32 {
 		logs.Info("acme: master key loaded from %s (32 bytes)", keyPath)
 		return data
 	}
-	// 最后兜底: 机器指纹。**不再写盘**,避免写错位置 + 后续被误用
-	logs.Warn("acme: NPS_MASTER_KEY env not set, .acme_master_key not found at %s, "+
-		"falling back to machine fingerprint. This may be unstable across container "+
-		"restarts. Set NPS_MASTER_KEY env for production use.", keyPath)
-	return deriveFromMachineID()
+	// 都没设: 自动生成一个 32 字节随机 key 写盘, 后续启动会读到这个文件
+	// 比"用 hostname 派生"更安全(每个部署唯一,容器间不共享 key)
+	newKey := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, newKey); err != nil {
+		// 极少见(熵不足), 兜底用 hostname 派生
+		logs.Warn("acme: 没法生成随机 key, 走 hostname fallback: %v", err)
+		return deriveFromMachineID()
+	}
+	if err := os.WriteFile(keyPath, newKey, 0600); err != nil {
+		logs.Warn("acme: 写 .acme_master_key 失败 (%v), 这次重启后密文可能解不开, 建议把 nps_master_key 显式设到 nps.conf", err)
+	} else {
+		logs.Info("acme: 自动生成新 master key 写到 %s, 后续启动会读这个文件", keyPath)
+	}
+	return newKey
 }
 
 // deriveFromMachineID 用机器指纹派生 key(原始方案,rc5 之前用)
