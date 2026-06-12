@@ -2,7 +2,10 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"ehang.io/nps/bridge"
 	"ehang.io/nps/lib/acme"
 	"ehang.io/nps/lib/daemon"
@@ -10,6 +13,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/fatih/color"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -479,7 +483,134 @@ func initConfig(confDir string) {
 		logs.Info("auth_key:", authKey)
 		logs.Info("auth_crypt_key:", authCryptKey)
 	}
+	// 无论新装/升级, 都走一遍 compat:
+	//   - 新装: defaultNpsConf 里的 nps_master_key= 是空占位, 会被替换为新 32 字节 base64
+	//   - 升级: 缺的字段会被补上, 已有非空字段不动
+	// 这样 deriveMachineKey() 始终走 nps.conf 路径, 不会写到 .acme_master_key 文件,
+	// 跨重启跨容器迁移密文都能解
+	ensureAcmeConfFields(confPath)
 	web.ExtractWebFiles(common.GetRunPath())
+}
+
+// ensureAcmeConfFields 老 nps.conf 升级兼容:
+//   - acme_email 缺则追加 acme_email=admin@lemaer.xyz
+//   - nps_master_key 缺(或值为空)则生成 32 字节随机 base64 写进 nps.conf
+//   - 不会覆盖用户已有的非注释值
+//   - 保留原文件换行符(LF / CRLF), 不引入无谓的 diff
+//
+// 注释行(以 ; 或 # 开头)不算"已配置" —— 用户主动注释的我们也照样补,
+// 因为留着空 nps_master_key 启动时会在 .acme_master_key 路径写入随机 key,
+// 跟 nps.conf 路径分裂容易让用户困惑。不如直接给个稳定固定值。
+//
+// 注释行以外, "key=" / "key =空值" 视为"需要补", "key=xxx" 才视为"已配置"。
+// 空值行会被替换为带值的行(不重复出现, 避免 beego 解析时冲突)。
+func ensureAcmeConfFields(confPath string) {
+	raw, err := os.ReadFile(confPath)
+	if err != nil {
+		logs.Warn("compat: read nps.conf failed, skip acme field ensure: %v", err)
+		return
+	}
+	// 检测原文件换行符(LF / CRLF), 保持原样
+	eol := "\n"
+	if bytes.Contains(raw, []byte("\r\n")) {
+		eol = "\r\n"
+	}
+	// 去掉末尾一个 eol(避免重复), 后面追加时再加
+	text := string(raw)
+	if strings.HasSuffix(text, eol) {
+		text = text[:len(text)-len(eol)]
+	}
+	// 沿原 eol 切行(避免 CRLF 文件被切成 "key=\r" 然后 prefix 匹配失败)
+	lines := strings.Split(text, eol)
+	hasEmail, hasMaster := false, false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, ";") || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "acme_email=") || strings.HasPrefix(trimmed, "acme_email =") {
+			v := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(trimmed, "acme_email="), "acme_email ="))
+			if v != "" {
+				hasEmail = true
+			}
+		}
+		if strings.HasPrefix(trimmed, "nps_master_key=") || strings.HasPrefix(trimmed, "nps_master_key =") {
+			v := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(trimmed, "nps_master_key="), "nps_master_key ="))
+			if v != "" {
+				hasMaster = true
+			}
+		}
+	}
+	if hasEmail && hasMaster {
+		return
+	}
+	// 在文件末尾追加缺的字段(带注释引导, 用户能看出含义)
+	// 但如果原文件已有 "key=" / "key =空值" 行, 就用新值**替换**那一行(不重复)
+	var sb strings.Builder
+	emailReplaced, masterReplaced := false, false
+	autoKey := generateMasterKey32B()
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// 跳过空值 acme_email= 行, 用新值替换
+		if !hasEmail && !emailReplaced {
+			if strings.HasPrefix(trimmed, "acme_email=") || strings.HasPrefix(trimmed, "acme_email =") {
+				v := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(trimmed, "acme_email="), "acme_email ="))
+				if v == "" {
+					sb.WriteString("acme_email=admin@lemaer.xyz")
+					sb.WriteString(eol)
+					emailReplaced = true
+					logs.Info("compat: nps.conf 有空 acme_email=, 已替换为 admin@lemaer.xyz(可手动改)")
+					continue
+				}
+			}
+		}
+		// 跳过空值 nps_master_key= 行, 用新值替换
+		if !hasMaster && !masterReplaced {
+			if strings.HasPrefix(trimmed, "nps_master_key=") || strings.HasPrefix(trimmed, "nps_master_key =") {
+				v := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(trimmed, "nps_master_key="), "nps_master_key ="))
+				if v == "" {
+					sb.WriteString("nps_master_key=" + autoKey)
+					sb.WriteString(eol)
+					masterReplaced = true
+					logs.Info("compat: nps.conf 有空 nps_master_key=, 已替换为新生成的 32 字节随机 base64")
+					continue
+				}
+			}
+		}
+		sb.WriteString(line)
+		sb.WriteString(eol)
+	}
+	if !hasEmail && !emailReplaced {
+		sb.WriteString(eol)
+		sb.WriteString("; ACME 注册邮箱(由 compat 兼容层追加, v0.26.36 起, 可手动改成你自己的)" + eol)
+		sb.WriteString("acme_email=admin@lemaer.xyz" + eol)
+		logs.Info("compat: nps.conf 缺 acme_email, 已追加 acme_email=admin@lemaer.xyz")
+	}
+	if !hasMaster && !masterReplaced {
+		sb.WriteString(eol)
+		sb.WriteString("; ACME master key(由 compat 兼容层自动生成, v0.26.36 起)" + eol)
+		sb.WriteString("; 32 字节随机 base64 字符串, 用于加密 DNS API Key Secret" + eol)
+		sb.WriteString("; 推荐: 升级后立即手改成你自己的固定值(任何字符串都行, sha256 后做 AES-256 key)" + eol)
+		sb.WriteString("; 警告: 修改这个值后, 旧加密的 Key Secret 全部解不开, 需要在 SSL 凭证页重新填一次" + eol)
+		sb.WriteString("nps_master_key=" + autoKey + eol)
+		logs.Info("compat: nps.conf 缺 nps_master_key, 已自动生成 32 字节随机 base64 写进去(可手动改成你自己的固定值)")
+	}
+	if err := os.WriteFile(confPath, []byte(sb.String()), 0644); err != nil {
+		logs.Warn("compat: 写 nps.conf 失败, acme_email/nps_master_key 没补上: %v", err)
+	}
+}
+
+// generateMasterKey32B 生成 32 字节加密随机数 → 标准 base64 字符串(44 字符)。
+// nps_master_key 内部 sha256 后做 AES-256 key, 任意非空字符串都行, 给个 32 字节 base64
+// 是为了足够随机 + 用户改时知道是 base64 格式。
+func generateMasterKey32B() string {
+	buf := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, buf); err != nil {
+		// 极少见(熵不足), 兜底用 GetRandomString(64) 给个看着像 base64 的字符串
+		logs.Warn("compat: 没法用 crypto/rand 生成 32 字节, 走 fallback: %v", err)
+		return crypt.GetRandomString(64)
+	}
+	return base64.StdEncoding.EncodeToString(buf)
 }
 
 const defaultNpsConf = `http_proxy_ip=0.0.0.0
@@ -534,4 +665,12 @@ open_captcha=false
 
 tls_enable=true
 tls_bridge_port=8025
+
+; ACME / Let's Encrypt 自动证书相关
+; acme_email 必填: Let's Encrypt 注册账号的邮箱(没填证书申请会失败)
+acme_email=admin@lemaer.xyz
+; nps_master_key 选填: 用于加密 DNS API Key Secret 的 32 字节 base64 字符串
+; 这里留空的话, ensureAcmeConfFields() 会在首次启动时自动生成 32 字节随机 base64 写进这一行
+; 显式设值后, 后续启动都从 nps.conf 读(推荐: 升级后立即填一个固定值, 避免跨部署密文不兼容)
+nps_master_key=
 `

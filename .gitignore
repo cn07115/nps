@@ -9,3 +9,4 @@ npc.exe
 AGENTS.md
 .harness/
 dist/
+.nps-test/
