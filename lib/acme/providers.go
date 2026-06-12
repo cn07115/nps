@@ -78,15 +78,18 @@ func newLegoClient(cfg *file.SslConfig) (*lego.Client, error) {
 	// 解密 key secret
 	secret, err := Decrypt(cfg.KeySecret)
 	if err != nil {
-		// 兜底: 解不开时自动清空 cfg.KeySecret 写盘, 让用户能干净重填
-		if cfg.KeySecret != "" {
-			logs.Warn("acme: decrypt key secret failed (id=%d provider=%s): %v. 自动清空, 请重新填写 Key Secret", cfg.Id, cfg.Provider, err)
-			cfg.KeySecret = ""
-			if file.GetDb() != nil {
-				_ = file.GetDb().UpdateSslConfig(cfg)
-			}
-		}
-		return nil, fmt.Errorf("decrypt key secret failed: %w (已自动清空,请在 SSL 凭证页重新填写 Key Secret)", err)
+		// 不再自动清空 cfg.KeySecret 写盘 —— 之前 self-heal 逻辑在容器内会因为
+		// deriveMachineKey 不稳定(每次启动的机器指纹可能不同)反复触发"解密失败
+		// → 清空 → 重填 → 再解密失败"的死循环,反而把用户填的正确密文丢了。
+		// 这里只 log + 返回错误,让用户在 web UI 看到真实根因。
+		// 真正稳定的解法: 在容器/服务环境里设置 NPS_MASTER_KEY env,这样
+		// Encrypt 和 Decrypt 用的是同一份 key,永不解不开。
+		logs.Error("acme: decrypt key secret failed (id=%d provider=%s). "+
+			"这通常意味着 NPS_MASTER_KEY 环境变量在 Encrypt 之后被改了(或者容器重启后 "+
+			"派生出来的机器指纹变了)。建议: 1) 在容器环境里设一个固定的 NPS_MASTER_KEY; "+
+			"2) 在 SSL 凭证页重新填写 Key Secret 并保存,会用当前 master key 重新加密。 "+
+			"原始错误: %v", cfg.Id, cfg.Provider, err)
+		return nil, fmt.Errorf("decrypt key secret failed (master key 不匹配? 建议在部署环境设 NPS_MASTER_KEY env): %w", err)
 	}
 	if secret == "" {
 		return nil, fmt.Errorf("key secret 为空,请检查 SSL 凭证配置(Key Secret 字段必须填写,留空会导致签证书失败)")

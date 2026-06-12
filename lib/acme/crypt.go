@@ -20,32 +20,42 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/astaxie/beego/logs"
 )
 
-// deriveMachineKey 根据机器指纹派生 AES-256 key
-// 优先级: env NPS_MASTER_KEY > 持久化到 .acme_master_key > 机器指纹
-// 这样: 同台机器多次启动密文能解; 换机器后需要重新填 API key
+// deriveMachineKey 派生 AES-256 master key,用于加密 DNS API key secret
+//
+// 优先级(逐级回退,目标是"同密文同进程内任意时刻都能解"):
+//  1. NPS_MASTER_KEY env: 部署时(尤其是容器/1Panel)注入一个固定字符串,
+//     进程内任意位置 Encrypto/Decrypt 都能用同一个 key。**生产强烈建议设置。**
+//  2. confDir/.acme_master_key: 旧版本rc6~rc9走的路径,保留兼容(容器/cwd 不稳
+//     时这个文件可能写在一个不可预期的位置,但能读就说明上次启动成功写过)
+//  3. 机器指纹(hostname + machine-id): 不再**写盘**,只用于"读不到上述两者时"的
+//     最后兜底。**注意**: 这种兜底在容器重启、hostname 变化的场景下会
+//     算出不同 key,导致旧的密文解不开 —— 这是兜底模式固有的弱点。
+//     真要稳,请在部署时设 NPS_MASTER_KEY env。
 func deriveMachineKey() []byte {
 	if envKey := os.Getenv("NPS_MASTER_KEY"); envKey != "" {
 		h := sha256.Sum256([]byte("nps-acme:" + envKey))
 		return h[:]
 	}
-	// 优先从 confDir/.acme_master_key 读取(由启动时一次性写入,稳定)
-	// 这样 Docker 容器重启 / hostname 变化不影响解密
+	// 尝试读旧的 master key 文件(从 rc6~rc9 留传下来的,可能落在任意 confDir)
 	confDir := resolveConfDir()
 	keyPath := filepath.Join(confDir, ".acme_master_key")
 	if data, err := os.ReadFile(keyPath); err == nil && len(data) == 32 {
+		logs.Info("acme: master key loaded from %s (32 bytes)", keyPath)
 		return data
 	}
-	// 回退: 兼容旧版本(升级前用 hostname 派生的密文)
-	// 尝试用 hostname 派生 key,看看能不能解开旧的密文
-	fallback := deriveFromMachineID()
-	// 把 fallback 写盘, 后续启动直接用
-	_ = os.WriteFile(keyPath, fallback, 0600)
-	return fallback
+	// 最后兜底: 机器指纹。**不再写盘**,避免写错位置 + 后续被误用
+	logs.Warn("acme: NPS_MASTER_KEY env not set, .acme_master_key not found at %s, "+
+		"falling back to machine fingerprint. This may be unstable across container "+
+		"restarts. Set NPS_MASTER_KEY env for production use.", keyPath)
+	return deriveFromMachineID()
 }
 
-// deriveFromMachineID 用机器指纹派生 key(原始方案,升级前已用的)
+// deriveFromMachineID 用机器指纹派生 key(原始方案,rc5 之前用)
+// 仅作为最终兜底使用,**不再写盘**
 func deriveFromMachineID() []byte {
 	parts := []string{runtime.GOOS, runtime.GOARCH}
 	if host, err := os.Hostname(); err == nil {
