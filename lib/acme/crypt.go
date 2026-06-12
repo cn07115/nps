@@ -37,7 +37,16 @@ func deriveMachineKey() []byte {
 	if data, err := os.ReadFile(keyPath); err == nil && len(data) == 32 {
 		return data
 	}
-	// 启动时一次性生成并持久化
+	// 回退: 兼容旧版本(升级前用 hostname 派生的密文)
+	// 尝试用 hostname 派生 key,看看能不能解开旧的密文
+	fallback := deriveFromMachineID()
+	// 把 fallback 写盘, 后续启动直接用
+	_ = os.WriteFile(keyPath, fallback, 0600)
+	return fallback
+}
+
+// deriveFromMachineID 用机器指纹派生 key(原始方案,升级前已用的)
+func deriveFromMachineID() []byte {
 	parts := []string{runtime.GOOS, runtime.GOARCH}
 	if host, err := os.Hostname(); err == nil {
 		parts = append(parts, host)
@@ -46,7 +55,6 @@ func deriveMachineKey() []byte {
 		parts = append(parts, strings.TrimSpace(string(data)))
 	}
 	h := sha256.Sum256([]byte(strings.Join(parts, "|")))
-	_ = os.WriteFile(keyPath, h[:], 0600) // 持久化,后续启动直接用
 	return h[:]
 }
 

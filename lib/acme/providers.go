@@ -78,7 +78,15 @@ func newLegoClient(cfg *file.SslConfig) (*lego.Client, error) {
 	// 解密 key secret
 	secret, err := Decrypt(cfg.KeySecret)
 	if err != nil {
-		return nil, fmt.Errorf("decrypt key secret failed: %w", err)
+		// 兜底: 解不开时自动清空 cfg.KeySecret 写盘, 让用户能干净重填
+		if cfg.KeySecret != "" {
+			logs.Warn("acme: decrypt key secret failed (id=%d provider=%s): %v. 自动清空, 请重新填写 Key Secret", cfg.Id, cfg.Provider, err)
+			cfg.KeySecret = ""
+			if file.GetDb() != nil {
+				_ = file.GetDb().UpdateSslConfig(cfg)
+			}
+		}
+		return nil, fmt.Errorf("decrypt key secret failed: %w (已自动清空,请在 SSL 凭证页重新填写 Key Secret)", err)
 	}
 	if secret == "" {
 		return nil, fmt.Errorf("key secret 为空,请检查 SSL 凭证配置(Key Secret 字段必须填写,留空会导致签证书失败)")
