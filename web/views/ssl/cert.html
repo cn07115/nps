@@ -93,13 +93,18 @@ var loadCerts = function() {
             var reissueBtn = (c.status === 'failed' || c.status === 'expired')
                 ? '<button class="btn btn-warning btn-xs cert-reissue" data-domain="' + c.domain + '">重签</button>'
                 : '<button class="btn btn-info btn-xs cert-reissue" data-domain="' + c.domain + '">重新签发</button>';
+            var errCell = '<span class="text-muted">-</span>';
+            if (c.last_error) {
+                var shortErr = c.last_error.length > 80 ? c.last_error.substring(0, 80) + '…' : c.last_error;
+                errCell = '<code class="text-danger" style="font-size:11px; cursor:help" title="' + c.last_error.replace(/"/g, '&quot;') + '">' + shortErr + '</code>';
+            }
             html += '<tr>' +
                 '<td><code>' + c.domain + '</code></td>' +
                 '<td>' + statusBadge(c.status) + '</td>' +
                 '<td>' + fmtTime(c.expires_at) + '</td>' +
                 '<td>' + daysHtml + '</td>' +
                 '<td>' + hostInfo + '</td>' +
-                '<td><code class="text-danger" style="font-size:11px">' + (c.last_error || '-') + '</code></td>' +
+                '<td style="max-width:300px; word-break:break-all">' + errCell + '</td>' +
                 '<td>' + reissueBtn + '</td>' +
                 '</tr>';
         });
