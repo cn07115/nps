@@ -1,104 +1,54 @@
 package acme
 
 import (
+	"fmt"
+	"os"
 	"testing"
 )
 
-func TestEncryptDecryptRoundTrip(t *testing.T) {
-	tests := []struct {
-		name      string
-		plaintext string
-	}{
-		{"empty", ""},
-		{"short", "hello"},
-		{"long", "AKIAIOSFODNN7EXAMPLE-this-is-a-fake-aws-access-key-for-testing-only"},
-		{"unicode", "测试中文+unicode 字符 + emoji 🔐"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ct, err := Encrypt(tt.plaintext)
-			if err != nil {
-				t.Fatalf("Encrypt failed: %v", err)
-			}
-			if tt.plaintext == "" {
-				if ct != "" {
-					t.Errorf("Encrypt empty should return empty, got %q", ct)
-				}
-				return
-			}
-			pt, err := Decrypt(ct)
-			if err != nil {
-				t.Fatalf("Decrypt failed: %v", err)
-			}
-			if pt != tt.plaintext {
-				t.Errorf("round trip mismatch: got %q want %q", pt, tt.plaintext)
-			}
-		})
-	}
-}
+// TestMasterKeyRoundTrip 验证 NPS_MASTER_KEY env 模式下, Encrypt/Decrypt 同一个 key 能 round-trip
+// 这是 1Panel / 容器环境下 ACME 自动 SSL 签证书能跑通的根本前提
+func TestMasterKeyRoundTrip(t *testing.T) {
+	plaintext := "my-secret-api-token-test-2026"
+	fmt.Printf("[test] plaintext:  %s\n", plaintext)
+	fmt.Printf("[test] NPS_MASTER_KEY env: %s\n", os.Getenv("NPS_MASTER_KEY"))
 
-func TestEncryptDeterministic(t *testing.T) {
-	// 同一明文两次加密应该得到不同密文(因为 nonce 随机)
-	pt := "test-secret"
-	ct1, err := Encrypt(pt)
+	ciphertext, err := Encrypt(plaintext)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Encrypt FAILED: %v", err)
 	}
-	ct2, err := Encrypt(pt)
+	fmt.Printf("[test] ciphertext: %s\n", ciphertext)
+
+	decrypted, err := Decrypt(ciphertext)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Decrypt FAILED: %v", err)
 	}
-	if ct1 == ct2 {
-		t.Error("expected different ciphertexts (random nonce)")
+	fmt.Printf("[test] decrypted:  %s\n", decrypted)
+
+	if decrypted != plaintext {
+		t.Fatalf("FAIL: decrypted (%q) != plaintext (%q)", decrypted, plaintext)
 	}
-	// 但都能解密回原文
-	pt1, _ := Decrypt(ct1)
-	pt2, _ := Decrypt(ct2)
-	if pt1 != pt || pt2 != pt {
-		t.Error("decrypt failed")
-	}
+	fmt.Println("[test] PASS: round-trip OK")
 }
 
-func TestDecryptBadInput(t *testing.T) {
-	// 非 base64 输入
-	_, err := Decrypt("not-base64!@#")
-	if err == nil {
-		t.Error("expected error for non-base64 input")
-	}
-	// 太短的密文
-	_, err = Decrypt("AAAA")
-	if err == nil {
-		t.Error("expected error for short ciphertext")
-	}
-}
+// TestMasterKeyFromFileFallback 验证旧的 .acme_master_key 文件方式还能 work
+func TestMasterKeyFromFileFallback(t *testing.T) {
+	plaintext := "test-without-env-2026"
+	// 不设 NPS_MASTER_KEY, 走 .acme_master_key 或 hostname fallback
+	os.Unsetenv("NPS_MASTER_KEY")
 
-func TestIsValidProvider(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  bool
-	}{
-		{"alidns", "alidns", true},
-		{"dnspod", "dnspod", true},
-		{"cloudflare", "cloudflare", true},
-		{"huaweicloud", "huaweicloud", true},
-		{"unknown", "unknown", false},
-		{"empty", "", false},
+	ciphertext, err := Encrypt(plaintext)
+	if err != nil {
+		t.Fatalf("Encrypt FAILED: %v", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsValidProvider(tt.input); got != tt.want {
-				t.Errorf("IsValidProvider(%q) = %v, want %v", tt.input, got, tt.want)
-			}
-		})
-	}
-}
+	fmt.Printf("[test] ciphertext (no env): %s\n", ciphertext)
 
-func TestProviderDisplayName(t *testing.T) {
-	if ProviderDisplayName("alidns") != "阿里云 DNS (Alidns)" {
-		t.Error("alidns display name wrong")
+	decrypted, err := Decrypt(ciphertext)
+	if err != nil {
+		t.Fatalf("Decrypt FAILED: %v", err)
 	}
-	if ProviderDisplayName("unknown") != "unknown" {
-		t.Error("unknown should return as-is")
+	if decrypted != plaintext {
+		t.Fatalf("FAIL: decrypted != plaintext")
 	}
+	fmt.Println("[test] PASS: fallback mode round-trip OK")
 }

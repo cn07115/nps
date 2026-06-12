@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ehang.io/nps/lib/file"
+	"github.com/astaxie/beego"
 	"github.com/astaxie/beego/logs"
 	"github.com/go-acme/lego/v4/certificate"
 	"github.com/go-acme/lego/v4/lego"
@@ -20,15 +21,17 @@ import (
 )
 
 // acmeUser 实现 lego registration.User 接口
-// 简化: 私钥每次新生成, 不持久化(生产可优化: 存到 /conf/.lego/accounts/<email>/)
+// 私钥每次新生成, 不持久化(生产可优化: 存到 /conf/.lego/accounts/<email>/)
+// registration 字段在 Register() 之后填充, 给 GetRegistration() 用
 type acmeUser struct {
-	email string
-	key   *rsa.PrivateKey
+	email        string
+	key          *rsa.PrivateKey
+	registration *registration.Resource
 }
 
-func (u *acmeUser) GetEmail() string        { return u.email }
+func (u *acmeUser) GetEmail() string { return u.email }
 func (u *acmeUser) GetRegistration() *registration.Resource {
-	return nil // 简化: 每次新建
+	return u.registration
 }
 func (u *acmeUser) GetPrivateKey() crypto.PrivateKey {
 	if u.key == nil {
@@ -145,8 +148,15 @@ func newLegoClient(cfg *file.SslConfig) (*lego.Client, error) {
 		return nil, fmt.Errorf("unsupported DNS provider: %s", cfg.Provider)
 	}
 	// 构造 lego client
-	// 用 KeyID 当 email 注册 ACME 账户(简化: 不做持久化 user, 每次签发都新建)
-	myUser := &acmeUser{email: cfg.KeyID}
+	// ACME 注册需要 email(Let's Encrypt 强制要求),但 KeyID 在不同 DNS 厂商含义不同
+	//(阿里云 AccessKeyId / Cloudflare Account ID / ...),不能直接当 email
+	// 优先级: 1) nps.conf 全局 acme_email; 2) 兜底 admin@nps.local(LE 通常会拒)
+	acmeEmail := beego.AppConfig.String("acme_email")
+	if acmeEmail == "" {
+		acmeEmail = "admin@nps.local"
+		logs.Warn("acme: nps.conf 没设 acme_email, 用兜底 %q 注册 ACME 账户(Let's Encrypt 通常会拒, 建议在 conf/nps.conf 加 acme_email=you@example.com)", acmeEmail)
+	}
+	myUser := &acmeUser{email: acmeEmail}
 	config := lego.NewConfig(myUser)
 	config.Certificate.KeyType = "ec256"
 	config.Certificate.Timeout = 5 * time.Minute
@@ -154,6 +164,15 @@ func newLegoClient(cfg *file.SslConfig) (*lego.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("lego new client: %w", err)
 	}
+	// 注册 ACME 账户(必须调 Register 才能拿到 KID, 否则 LE 报 No Key ID in JWS header)
+	// 用 RegisterTOS(已注册过) / Register(全新) —— 我们不持久化 user, 每次都重新注册
+	reg, err := client.Registration.Register(registration.RegisterOptions{TermsOfServiceAgreed: true})
+	if err != nil {
+		return nil, fmt.Errorf("acme register (email=%s): %w", acmeEmail, err)
+	}
+	myUser.registration = reg
+	uri := reg.URI
+	logs.Info("acme: registered account kid_uri=%s", uri)
 	// 设置 DNS challenge
 	if err := client.Challenge.SetDNS01Provider(provider); err != nil {
 		return nil, fmt.Errorf("set DNS01 provider: %w", err)
