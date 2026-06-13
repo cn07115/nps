@@ -246,6 +246,36 @@ func (s *SslController) CertPEM() {
 	s.ServeJSON()
 }
 
+// ResetSecret 清空指定 SSL 凭证的 Key Secret(用在新 master key 跟旧密文对不上的场景)
+// 用法: GET/POST /ssl/resetSecret?id=<sslId>
+//
+// 为什么需要: 之前用 NPS_MASTER_KEY env 加密过凭证, 升级后 master key 路径改成 nps.conf 后,
+// 旧密文解不开, 用户在 SSL 凭证页"编辑"时 KeySecret 字段留空 = 不修改, 没救。
+// 加这个端点让用户能一键清空, 然后再在编辑页填新 secret 即可。
+func (s *SslController) ResetSecret() {
+	id := s.GetIntNoErr("id")
+	if id == 0 {
+		s.AjaxErr("id 必填")
+		return
+	}
+	cfg, err := file.GetDb().GetSslConfig(id)
+	if err != nil {
+		s.AjaxErr("配置不存在")
+		return
+	}
+	if cfg.KeySecret == "" {
+		s.AjaxOk("Key Secret 已经是空的, 无需重置")
+		return
+	}
+	cfg.KeySecret = ""
+	if err := file.GetDb().UpdateSslConfig(cfg); err != nil {
+		s.AjaxErr("清空失败: " + err.Error())
+		return
+	}
+	logs.Notice("acme: ssl config id=%d Key Secret cleared by user (compat: nps_master_key 改 nps.conf 后旧密文解不开的场景)", id)
+	s.AjaxOk("Key Secret 已清空, 请去编辑页重新填写并保存")
+}
+
 // Reissue 手动重签证书
 func (s *SslController) Reissue() {
 	domain := s.GetString("domain")

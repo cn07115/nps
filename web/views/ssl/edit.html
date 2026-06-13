@@ -56,6 +56,16 @@
                         <div class="col-sm-4 col-sm-offset-2">
                             <button class="btn btn-primary" type="submit">保存</button>
                             <a class="btn btn-default" href="/ssl/index">取消</a>
+                            {{if .cfg.Id}}
+                            <a class="btn btn-warning" href="javascript:void(0)" id="reset-secret-btn" style="margin-left:8px;">
+                                <i class="fa fa-unlock-alt"></i> 重置 Key Secret
+                            </a>
+                            <span class="help-block m-b-none text-danger" style="margin-top:8px;">
+                                <i class="fa fa-exclamation-triangle"></i> 只有在升级后旧密文用新 master key 解不开时,
+                                才需要点"重置 Key Secret"。点完后 Key Secret 字段会被清空,
+                                接着重新填一次并保存即可。
+                            </span>
+                            {{end}}
                         </div>
                     </div>
                 </form>
@@ -133,6 +143,22 @@ $(function() {
                 location.href = '/ssl/index';
             } else {
                 alert(r.msg || '保存失败');
+            }
+        });
+    });
+
+    // 重置 Key Secret
+    $('#reset-secret-btn').on('click', function() {
+        if (!confirm('确定要清空 Key Secret 吗?\n\n点击确定后, 当前密文会被清空, 你需要重新填一次并保存才能继续申请证书。')) {
+            return;
+        }
+        var id = $('input[name="id"]').val();
+        $.post('/ssl/resetSecret', {id: id}, function(r) {
+            if (r.status === 1) {
+                alert(r.msg);
+                location.reload();
+            } else {
+                alert(r.msg || '重置失败');
             }
         });
     });
